@@ -1,162 +1,259 @@
+"""
+Football Match Predictor - Single File App
+No separate engine.py needed
+Works on Streamlit Cloud
+"""
+
 import streamlit as st
-from engine import PredictionEngine
+import pandas as pd
 
-st.set_page_config(page_title="⚽ Ozone Predictor", layout="wide")
-
-st.title("⚽ Football Match Predictor")
-st.markdown("Enter team stats to get predictions for ANY league")
-
-# Create two columns for team inputs
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("🏠 Home Team")
-    home_name = st.text_input("Team Name", "Vitória Guimarães", key="home_name")
+# ========== PREDICTION ENGINE ==========
+def predict_match(home_stats, away_stats):
+    """
+    Simple prediction engine that works for any team
+    """
+    # Calculate expected goals
+    home_expected = (home_stats['goals_scored'] + away_stats['goals_conceded']) / 2
+    away_expected = (away_stats['goals_scored'] + home_stats['goals_conceded']) / 2
+    total_expected = home_expected + away_expected
     
-    st.markdown("**Home Stats (when playing at home)**")
-    home_ppg = st.number_input("Points Per Game", min_value=0.0, max_value=3.0, value=1.83, step=0.1, key="home_ppg")
-    home_goals_scored = st.number_input("Avg Goals Scored", min_value=0.0, max_value=5.0, value=1.83, step=0.1, key="home_gs")
-    home_goals_conceded = st.number_input("Avg Goals Conceded", min_value=0.0, max_value=5.0, value=1.33, step=0.1, key="home_gc")
-    home_clean_sheets = st.slider("Clean Sheet %", 0, 100, 17, key="home_cs")
-
-with col2:
-    st.subheader("✈️ Away Team")
-    away_name = st.text_input("Team Name", "Gil Vicente", key="away_name")
+    # 1. Match Result
+    home_strength = home_stats['ppg'] + (home_stats['goals_scored'] * 0.3)
+    away_strength = away_stats['ppg'] + (away_stats['goals_scored'] * 0.3)
     
-    st.markdown("**Away Stats (when playing away)**")
-    away_ppg = st.number_input("Points Per Game", min_value=0.0, max_value=3.0, value=1.83, step=0.1, key="away_ppg")
-    away_goals_scored = st.number_input("Avg Goals Scored", min_value=0.0, max_value=5.0, value=1.50, step=0.1, key="away_gs")
-    away_goals_conceded = st.number_input("Avg Goals Conceded", min_value=0.0, max_value=5.0, value=0.50, step=0.1, key="away_gc")
-    away_clean_sheets = st.slider("Clean Sheet %", 0, 100, 67, key="away_cs")
-
-# H2H Section (optional)
-with st.expander("⚔️ Head-to-Head History (Optional)"):
-    col_a, col_b = st.columns(2)
-    with col_a:
-        h2h_meetings = st.number_input("Total Meetings", min_value=0, value=21, step=1)
-        h2h_home_wins = st.number_input(f"{home_name} Wins", min_value=0, value=9, step=1)
-    with col_b:
-        h2h_away_wins = st.number_input(f"{away_name} Wins", min_value=0, value=7, step=1)
-        h2h_avg_goals = st.number_input("Avg Goals per Match", min_value=0.0, value=2.95, step=0.1)
-
-# Predict Button
-if st.button("🎯 Generate Prediction", type="primary"):
-    # Prepare stats
-    home_stats = {
-        'ppg': home_ppg,
-        'goals_scored': home_goals_scored,
-        'goals_conceded': home_goals_conceded,
-        'clean_sheets': home_clean_sheets
+    if home_strength - away_strength > 0.5:
+        result = "Home Win"
+    elif away_strength - home_strength > 0.5:
+        result = "Away Win"
+    else:
+        result = "Draw"
+    
+    # 2. Over/Under
+    if total_expected > 2.7:
+        over_under = "Over 2.5"
+    elif total_expected < 2.2:
+        over_under = "Under 2.5"
+    else:
+        over_under = "Around 2.5"
+    
+    # 3. BTTS
+    if (home_stats['goals_scored'] > 1.2 and away_stats['goals_scored'] > 1.2 and
+        (home_stats['goals_conceded'] > 1.0 or away_stats['goals_conceded'] > 1.0)):
+        btts = "Yes"
+    elif home_stats['clean_sheets'] > 55 or away_stats['clean_sheets'] > 55:
+        btts = "No"
+    else:
+        btts = "No (Leaning)"
+    
+    # 4. Confidence
+    confidence = 50
+    ppg_diff = abs(home_stats['ppg'] - away_stats['ppg'])
+    if ppg_diff > 0.7:
+        confidence += 20
+    elif ppg_diff > 0.3:
+        confidence += 10
+    
+    if home_stats['goals_conceded'] < 0.9 or away_stats['goals_conceded'] < 0.9:
+        confidence += 10
+    
+    confidence = min(85, max(45, confidence))
+    
+    return {
+        'result': result,
+        'over_under': over_under,
+        'btts': btts,
+        'confidence': confidence,
+        'total_goals': round(total_expected, 1),
+        'home_goals': round(home_expected, 1),
+        'away_goals': round(away_expected, 1)
     }
+
+# ========== STREAMLIT APP ==========
+def main():
+    st.set_page_config(
+        page_title="Football Predictor",
+        page_icon="⚽",
+        layout="wide"
+    )
     
-    away_stats = {
-        'ppg': away_ppg,
-        'goals_scored': away_goals_scored,
-        'goals_conceded': away_goals_conceded,
-        'clean_sheets': away_clean_sheets
-    }
+    # Title
+    st.title("⚽ Football Match Predictor")
+    st.markdown("Enter team statistics to get predictions for any league")
     
-    # Optional H2H stats
-    h2h_stats = None
-    if h2h_meetings > 0:
-        h2h_stats = {
-            'avg_goals': h2h_avg_goals,
-            'home_win_rate': (h2h_home_wins / h2h_meetings) * 100,
-            'away_win_rate': (h2h_away_wins / h2h_meetings) * 100
-        }
-    
-    # Make prediction
-    engine = PredictionEngine()
-    prediction = engine.predict_match(home_stats, away_stats, h2h_stats)
-    
-    # Display results
-    st.divider()
-    st.header(f"📊 Prediction: {home_name} vs {away_name}")
-    
-    # Confidence indicator
-    conf_color = "green" if prediction['confidence'] > 70 else "orange" if prediction['confidence'] > 55 else "red"
-    st.markdown(f"**Confidence:** :{conf_color}[{prediction['confidence']}%]")
-    
-    # Results in columns
-    col1, col2, col3 = st.columns(3)
+    # Two columns for team inputs
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.metric(
-            label="🏆 Match Result",
-            value=prediction['result'],
-            delta=f"{prediction['expected_goals']} expected goals"
-        )
+        st.subheader("🏠 Home Team")
+        home_name = st.text_input("Team Name", "Vitória Guimarães", key="home")
+        
+        st.markdown("**Home Form Stats**")
+        home_ppg = st.slider("Points Per Game", 0.0, 3.0, 1.83, 0.1, key="h_ppg")
+        home_scored = st.slider("Avg Goals Scored", 0.0, 4.0, 1.83, 0.1, key="h_gs")
+        home_conceded = st.slider("Avg Goals Conceded", 0.0, 4.0, 1.33, 0.1, key="h_gc")
+        home_cs = st.slider("Clean Sheet %", 0, 100, 17, key="h_cs")
     
     with col2:
-        st.metric(
-            label="⚽ Goals",
-            value=prediction['over_under']
-        )
+        st.subheader("✈️ Away Team")
+        away_name = st.text_input("Team Name", "Gil Vicente", key="away")
+        
+        st.markdown("**Away Form Stats**")
+        away_ppg = st.slider("Points Per Game", 0.0, 3.0, 1.83, 0.1, key="a_ppg")
+        away_scored = st.slider("Avg Goals Scored", 0.0, 4.0, 1.50, 0.1, key="a_gs")
+        away_conceded = st.slider("Avg Goals Conceded", 0.0, 4.0, 0.50, 0.1, key="a_gc")
+        away_cs = st.slider("Clean Sheet %", 0, 100, 67, key="a_cs")
     
-    with col3:
-        st.metric(
-            label="🎯 Both Teams Score",
-            value=prediction['btts'].split(" - ")[0]
-        )
-    
-    # Explanation
     st.divider()
-    st.subheader("🤔 How this prediction was made")
     
-    st.markdown(f"""
-    **Key Factors Considered:**
+    # Stats summary
+    if st.button("📊 Show Stats Summary", type="secondary"):
+        stats_df = pd.DataFrame({
+            'Statistic': ['PPG', 'Goals Scored', 'Goals Conceded', 'Clean Sheet %'],
+            home_name: [home_ppg, home_scored, home_conceded, f"{home_cs}%"],
+            away_name: [away_ppg, away_scored, away_conceded, f"{away_cs}%"],
+            'Difference': [
+                f"{home_ppg - away_ppg:+.2f}",
+                f"{home_scored - away_scored:+.2f}",
+                f"{home_conceded - away_conceded:+.2f}",
+                f"{home_cs - away_cs:+d}%"
+            ]
+        })
+        st.dataframe(stats_df, use_container_width=True)
     
-    1. **Home Advantage:** {home_name} averages **{home_ppg} points per game** at home
-    2. **Away Performance:** {away_name} averages **{away_ppg} points per game** away
-    3. **Attack vs Defense:** 
-       - {home_name} scores {home_goals_scored} goals but concedes {home_goals_conceded} at home
-       - {away_name} scores {away_goals_scored} goals but concedes only {away_goals_conceded} away
-    4. **Clean Sheets:** {away_name} keeps clean sheets in **{away_clean_sheets}%** of away games
-    """)
+    # Prediction button
+    if st.button("🎯 Generate Prediction", type="primary", use_container_width=True):
+        # Prepare data
+        home_stats = {
+            'ppg': home_ppg,
+            'goals_scored': home_scored,
+            'goals_conceded': home_conceded,
+            'clean_sheets': home_cs
+        }
+        
+        away_stats = {
+            'ppg': away_ppg,
+            'goals_scored': away_scored,
+            'goals_conceded': away_conceded,
+            'clean_sheets': away_cs
+        }
+        
+        # Get prediction
+        pred = predict_match(home_stats, away_stats)
+        
+        # Display results
+        st.success("✅ Prediction Generated!")
+        
+        # Results in columns
+        r1, r2, r3, r4 = st.columns(4)
+        
+        with r1:
+            st.metric("Match Result", pred['result'], f"{pred['confidence']}% conf")
+        
+        with r2:
+            st.metric("Total Goals", pred['over_under'], f"Exp: {pred['total_goals']}")
+        
+        with r3:
+            st.metric("Both Teams Score", pred['btts'])
+        
+        with r4:
+            st.metric("Expected Score", f"{pred['home_goals']}-{pred['away_goals']}")
+        
+        # Analysis
+        st.divider()
+        st.subheader("📈 Analysis")
+        
+        analysis_col1, analysis_col2 = st.columns(2)
+        
+        with analysis_col1:
+            st.markdown(f"""
+            **Key Factors:**
+            
+            • **Home Advantage:** {home_name} averages **{home_ppg} PPG** at home
+            
+            • **Away Defense:** {away_name} concedes only **{away_conceded}** goals away
+            
+            • **Clean Sheets:** {away_name} keeps clean sheets in **{away_cs}%** of away games
+            
+            • **Goal Expectancy:** {pred['home_goals']} - {pred['away_goals']}
+            """)
+        
+        with analysis_col2:
+            # Betting recommendation
+            if pred['confidence'] > 70:
+                rec = "✅ Strong Bet"
+                color = "green"
+            elif pred['confidence'] > 55:
+                rec = "⚠️ Moderate Bet"
+                color = "orange"
+            else:
+                rec = "❌ Avoid/Low Stake"
+                color = "red"
+            
+            st.markdown(f"""
+            **Betting Advice:**
+            
+            **{rec}**
+            
+            Consider betting on:
+            • **{pred['result']}**
+            • **{pred['over_under']} goals**
+            
+            Confidence: **{pred['confidence']}%**
+            """)
+        
+        # Create a simple chart
+        chart_data = pd.DataFrame({
+            'Team': [home_name, away_name],
+            'Attack': [home_scored, away_scored],
+            'Defense': [3 - home_conceded, 3 - away_conceded]  # Invert so higher = better
+        })
+        
+        st.bar_chart(chart_data.set_index('Team'))
     
-    # Simple betting advice
+    # Sidebar with examples
+    with st.sidebar:
+        st.header("📚 Quick Examples")
+        
+        st.markdown("""
+        **Copy these examples:**
+        
+        **Defensive Battle:**
+        ```
+        Home: PPG 1.8, Scored 1.4, Conceded 0.9, CS 35%
+        Away: PPG 1.6, Scored 1.1, Conceded 0.8, CS 45%
+        ```
+        
+        **High Scoring:**
+        ```
+        Home: PPG 2.1, Scored 2.3, Conceded 1.6, CS 15%
+        Away: PPG 1.7, Scored 1.9, Conceded 1.8, CS 10%
+        ```
+        
+        **Even Match:**
+        ```
+        Home: PPG 1.5, Scored 1.3, Conceded 1.2, CS 25%
+        Away: PPG 1.4, Scored 1.2, Conceded 1.3, CS 20%
+        ```
+        """)
+        
+        st.divider()
+        
+        st.markdown("""
+        **Where to find stats:**
+        
+        1. **FootyStats.org** (free)
+        2. **SofaScore.com**
+        3. **WhoScored.com**
+        4. **League websites**
+        
+        Use **HOME** stats for home team  
+        Use **AWAY** stats for away team
+        """)
+    
+    # Footer
     st.divider()
-    st.subheader("💰 Betting Recommendation")
-    
-    if prediction['confidence'] > 70:
-        st.success(f"**STRONG BET** - High confidence prediction")
-        st.info("Consider: {prediction['result']} & {prediction['over_under']}")
-    elif prediction['confidence'] > 55:
-        st.warning(f"**MODERATE BET** - Reasonable confidence")
-        st.info("Consider: {prediction['over_under']}")
-    else:
-        st.error(f"**AVOID OR SMALL BET** - Low confidence")
-        st.info("Match too close to call. Consider watching instead.")
+    st.caption("Ozone Predictor • No API required • Works for any football league")
 
-# Sidebar with examples
-with st.sidebar:
-    st.header("📚 Examples")
-    
-    st.markdown("""
-    **Quick Examples:**
-    
-    **Defensive Away Team:**
-    - Home: PPG 1.8, Scored 1.8, Conceded 1.3
-    - Away: PPG 1.8, Scored 1.5, Conceded 0.5
-    
-    **High-Scoring Match:**
-    - Home: PPG 2.0, Scored 2.5, Conceded 1.5  
-    - Away: PPG 1.5, Scored 2.0, Conceded 2.0
-    
-    **Even Matchup:**
-    - Home: PPG 1.6, Scored 1.4, Conceded 1.2
-    - Away: PPG 1.5, Scored 1.3, Conceded 1.3
-    """)
-    
-    st.divider()
-    st.markdown("""
-    **Stats Guide:**
-    - **PPG:** Points per game (Win=3, Draw=1, Loss=0)
-    - **Clean Sheet %:** Games where team didn't concede
-    - Use team's **HOME** stats for home team
-    - Use team's **AWAY** stats for away team
-    """)
-
-# Footer
-st.divider()
-st.caption("Ozone Predictor v1.0 • Works for any league • Based on FootyStats methodology")
+# Run the app
+if __name__ == "__main__":
+    main()
