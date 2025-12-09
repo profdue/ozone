@@ -1,313 +1,208 @@
 """
-engine.py - Pure prediction logic engine
-No UI, no data input - just mathematical calculations
+engine.py - Football Prediction Engine
+Uses PPG directly for form calculations
 """
 
-from typing import Dict, Tuple, List, Optional
+from typing import Dict
 import math
 from dataclasses import dataclass
-from enum import Enum
-
-class MarketType(Enum):
-    MATCH_RESULT = "1X2"
-    OVER_UNDER_25 = "Over/Under 2.5"
-    BTTS = "Both Teams to Score"
-
-class Prediction(Enum):
-    HOME_WIN = "Home Win"
-    AWAY_WIN = "Away Win"
-    DRAW = "Draw"
-    OVER_25 = "Over 2.5"
-    UNDER_25 = "Under 2.5"
-    BTTS_YES = "BTTS Yes"
-    BTTS_NO = "BTTS No"
 
 @dataclass
 class TeamMetrics:
-    """Pure statistical metrics for calculations"""
-    # Attack metrics (goals per game)
-    attack_strength: float
-    # Defense metrics (goals conceded per game, lower = better)
-    defense_strength: float
-    # Form metrics (0-1, higher = better recent form)
-    form_factor: float
-    # Clean sheet percentage (0-1)
-    clean_sheet_pct: float
-    # Failed to score percentage (0-1)
-    failed_to_score_pct: float
-    # Points per game
-    ppg: float
-    # BTTS percentage (0-1)
-    btts_pct: float
-
-@dataclass
-class MatchContext:
-    """Context for the match prediction"""
-    # League averages for normalization
-    league_avg_goals: float = 2.68
-    league_avg_btts: float = 0.46
-    league_avg_home_win: float = 0.45
-    # Home advantage multiplier
-    home_advantage: float = 1.15
-    # Away penalty multiplier
-    away_penalty: float = 0.92
+    """Team statistics - simple and clean"""
+    goals_scored: float      # Goals scored per game
+    goals_conceded: float    # Goals conceded per game  
+    ppg: float               # Points per game (last 5 matches)
+    clean_sheet_pct: float   # Clean sheet percentage (0-1)
+    failed_score_pct: float = 0.0  # Failed to score percentage (0-1)
 
 class PredictionEngine:
     """
-    PURE PREDICTION ENGINE
-    Only contains mathematical logic - no UI, no data collection
+    Main prediction engine
+    Converts PPG to form factor automatically
     """
     
-    def __init__(self, context: Optional[MatchContext] = None):
-        self.context = context or MatchContext()
+    def __init__(self):
+        # League context
+        self.league_avg_ppg = 1.33  # Average points per game
+        self.league_avg_goals = 2.68  # Average goals per match
         
-        # Universal thresholds
-        self.THRESHOLDS = {
-            'STRONG_DEFENSE': 0.8,  # ≤ 0.8 goals conceded
-            'VERY_STRONG_DEFENSE': 0.6,
-            'WEAK_DEFENSE': 1.4,
-            'STRONG_ATTACK': 1.6,
-            'WEAK_ATTACK': 1.0,
-            'HIGH_CLEAN_SHEET': 0.5,
-            'HIGH_FAILED_TO_SCORE': 0.4,
-            'SIGNIFICANT_PPG_DIFF': 0.5,
-            'CLOSE_PPG': 0.2,
-        }
-    
-    def predict_match_result(self, home: TeamMetrics, away: TeamMetrics) -> Dict:
+    def predict(self, home: TeamMetrics, away: TeamMetrics) -> Dict:
         """
-        Predict 1X2 outcome with probabilities
+        Generate all predictions for a match
         """
-        # Base probabilities from PPG comparison
-        home_win_base = self._calculate_win_probability_from_ppg(home.ppg, away.ppg, is_home=True)
-        away_win_base = self._calculate_win_probability_from_ppg(away.ppg, home.ppg, is_home=False)
-        draw_base = 0.35  # League average draw rate
+        # Convert PPG to form factors
+        home_form = self._calculate_form_factor(home.ppg)
+        away_form = self._calculate_form_factor(away.ppg)
         
-        # Adjust for defensive strength
-        if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
-            home_win_base *= 0.7  # Reduce home win chance by 30%
-            draw_base *= 1.2
-            away_win_base *= 1.1
+        # Calculate expected goals
+        expected_goals = self._calculate_expected_goals(home, away, home_form, away_form)
         
-        # Adjust for clean sheet probability
-        if away.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
-            home_win_base *= 0.8
-            draw_base += 0.1
-        
-        # Normalize probabilities
-        total = home_win_base + draw_base + away_win_base
-        home_prob = home_win_base / total
-        draw_prob = draw_base / total
-        away_prob = away_win_base / total
-        
-        # Determine prediction
-        if abs(home_prob - away_prob) < 0.1 or draw_prob > 0.4:
-            prediction = Prediction.DRAW
-        elif home_prob > away_prob + 0.15:
-            prediction = Prediction.HOME_WIN
-        elif away_prob > home_prob + 0.15:
-            prediction = Prediction.AWAY_WIN
-        else:
-            prediction = Prediction.DRAW
-        
-        return {
-            'prediction': prediction,
-            'probabilities': {
-                'home_win': round(home_prob, 3),
-                'draw': round(draw_prob, 3),
-                'away_win': round(away_prob, 3)
+        # Generate predictions
+        predictions = {
+            'expected_goals': expected_goals,
+            'over_under': self._predict_over_under(expected_goals['total']),
+            'btts': self._predict_btts(expected_goals['home'], expected_goals['away']),
+            'match_result': self._predict_match_result(expected_goals['home'], expected_goals['away']),
+            'form_analysis': {
+                'home_form': round(home_form, 2),
+                'away_form': round(away_form, 2),
+                'home_ppg': home.ppg,
+                'away_ppg': away.ppg
             }
         }
+        
+        return predictions
     
-    def predict_over_under(self, home: TeamMetrics, away: TeamMetrics) -> Dict:
+    def _calculate_form_factor(self, ppg: float) -> float:
+        """
+        Convert PPG to form factor (0.8-1.2 scale)
+        Automatically calculated - user doesn't need to know
+        """
+        if ppg <= 0:
+            return 0.8
+        
+        # Scale PPG to 0.8-1.2 range
+        # Average PPG (1.33) maps to 1.0
+        # 0 PPG maps to 0.8, 3.0 PPG maps to 1.2
+        
+        if ppg <= self.league_avg_ppg:
+            # Below average: scale from 0.8 to 1.0
+            ratio = ppg / self.league_avg_ppg
+            form_factor = 0.8 + (ratio * 0.2)
+        else:
+            # Above average: scale from 1.0 to 1.2
+            ratio = (ppg - self.league_avg_ppg) / (3.0 - self.league_avg_ppg)
+            form_factor = 1.0 + (ratio * 0.2)
+        
+        # Ensure within bounds
+        return max(0.8, min(1.2, round(form_factor, 2)))
+    
+    def _calculate_expected_goals(self, home: TeamMetrics, away: TeamMetrics, 
+                                 home_form: float, away_form: float) -> Dict:
+        """
+        Calculate expected goals for both teams
+        """
+        # Base expected goals
+        home_expected = (home.goals_scored + away.goals_conceded) / 2
+        away_expected = (away.goals_scored + home.goals_conceded) / 2
+        
+        # Apply home advantage (15% boost for home team)
+        home_expected *= 1.15
+        
+        # Apply form factors
+        home_expected *= home_form
+        away_expected *= away_form
+        
+        # Apply defensive strength adjustments
+        if away.goals_conceded < 0.8:  # Strong defense
+            home_expected *= 0.8
+        
+        if home.goals_conceded < 0.8:  # Strong defense
+            away_expected *= 0.8
+        
+        # Ensure reasonable bounds
+        home_expected = max(0.2, min(3.0, home_expected))
+        away_expected = max(0.2, min(3.0, away_expected))
+        
+        return {
+            'home': round(home_expected, 2),
+            'away': round(away_expected, 2),
+            'total': round(home_expected + away_expected, 2)
+        }
+    
+    def _predict_over_under(self, total_goals: float) -> Dict:
         """
         Predict Over/Under 2.5 goals
         """
-        # Calculate expected goals
-        expected_home_goals = (home.attack_strength + away.defense_strength) / 2
-        expected_away_goals = (away.attack_strength + home.defense_strength) / 2
-        expected_total = expected_home_goals + expected_away_goals
-        
-        # Adjust for venue
-        expected_home_goals *= self.context.home_advantage
-        expected_away_goals *= self.context.away_penalty
-        expected_total = expected_home_goals + expected_away_goals
-        
-        # Calculate Poisson probability
-        prob_over = self._poisson_over_25(expected_total)
-        prob_under = 1 - prob_over
-        
-        # Defensive adjustment
-        if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
-            prob_over *= 0.6
-            prob_under = 1 - prob_over
-        
-        # Offensive weakness adjustment
-        if home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
-            prob_over *= 0.8
-            prob_under = 1 - prob_over
+        # Simple probability calculation
+        if total_goals > 3.0:
+            over_prob = 0.75
+        elif total_goals > 2.5:
+            over_prob = 0.65
+        elif total_goals > 2.0:
+            over_prob = 0.45
+        elif total_goals > 1.5:
+            over_prob = 0.35
+        else:
+            over_prob = 0.25
         
         # Determine prediction
-        if prob_under > 0.65:
-            prediction = Prediction.UNDER_25
-            confidence = self._calculate_confidence(prob_under)
-        elif prob_over > 0.65:
-            prediction = Prediction.OVER_25
-            confidence = self._calculate_confidence(prob_over)
-        else:
-            prediction = Prediction.UNDER_25 if prob_under > prob_over else Prediction.OVER_25
-            confidence = 'Low'
+        prediction = "Over 2.5" if over_prob > 0.5 else "Under 2.5"
         
         return {
+            'over': round(over_prob, 3),
+            'under': round(1 - over_prob, 3),
             'prediction': prediction,
-            'confidence': confidence,
-            'probabilities': {
-                'over': round(prob_over, 3),
-                'under': round(prob_under, 3)
-            },
-            'expected_goals': round(expected_total, 2)
+            'confidence': self._get_confidence_level(max(over_prob, 1 - over_prob))
         }
     
-    def predict_btts(self, home: TeamMetrics, away: TeamMetrics, h2h_btts: Optional[float] = None) -> Dict:
+    def _predict_btts(self, home_goals: float, away_goals: float) -> Dict:
         """
         Predict Both Teams to Score
         """
-        # Base probability from team stats
-        prob_home_scores = 1 - away.clean_sheet_pct
-        prob_away_scores = 1 - home.clean_sheet_pct
-        prob_btts = prob_home_scores * prob_away_scores
+        # Probability each team scores (using Poisson)
+        prob_home_scores = 1 - math.exp(-home_goals)
+        prob_away_scores = 1 - math.exp(-away_goals)
         
-        # Adjust for failed to score
-        if home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            prob_btts *= 0.7
-        if away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            prob_btts *= 0.7
-        
-        # Defensive adjustment
-        if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
-            prob_btts *= 0.6
-        
-        # H2H adjustment if available
-        if h2h_btts is not None:
-            prob_btts = (prob_btts * 0.7) + (h2h_btts * 0.3)
-        
-        prob_no_btts = 1 - prob_btts
+        # Combined probability for BTTS
+        btts_prob = prob_home_scores * prob_away_scores
         
         # Determine prediction
-        if prob_btts > 0.65:
-            prediction = Prediction.BTTS_YES
-            confidence = self._calculate_confidence(prob_btts)
-        elif prob_no_btts > 0.65:
-            prediction = Prediction.BTTS_NO
-            confidence = self._calculate_confidence(prob_no_btts)
-        else:
-            prediction = Prediction.BTTS_NO if prob_no_btts > prob_btts else Prediction.BTTS_YES
-            confidence = 'Low'
+        prediction = "BTTS Yes" if btts_prob > 0.5 else "BTTS No"
         
         return {
+            'yes': round(btts_prob, 3),
+            'no': round(1 - btts_prob, 3),
             'prediction': prediction,
-            'confidence': confidence,
-            'probabilities': {
-                'btts_yes': round(prob_btts, 3),
-                'btts_no': round(prob_no_btts, 3)
-            }
+            'confidence': self._get_confidence_level(max(btts_prob, 1 - btts_prob))
         }
     
-    def calculate_expected_goals(self, home: TeamMetrics, away: TeamMetrics) -> Dict:
+    def _predict_match_result(self, home_goals: float, away_goals: float) -> Dict:
         """
-        Calculate detailed expected goals
+        Predict match result probabilities
         """
-        # Base calculations
-        expected_home = (home.attack_strength + away.defense_strength) / 2
-        expected_away = (away.attack_strength + home.defense_strength) / 2
+        goal_diff = home_goals - away_goals
         
-        # Apply venue adjustments
-        expected_home *= self.context.home_advantage
-        expected_away *= self.context.away_penalty
+        # Simple probability assignment based on goal difference
+        if goal_diff > 1.0:
+            home_win, draw, away_win = 0.55, 0.25, 0.20
+        elif goal_diff > 0.5:
+            home_win, draw, away_win = 0.45, 0.30, 0.25
+        elif goal_diff > 0:
+            home_win, draw, away_win = 0.40, 0.35, 0.25
+        elif goal_diff > -0.5:
+            home_win, draw, away_win = 0.35, 0.35, 0.30
+        elif goal_diff > -1.0:
+            home_win, draw, away_win = 0.25, 0.30, 0.45
+        else:
+            home_win, draw, away_win = 0.20, 0.25, 0.55
         
-        # Form adjustments
-        expected_home *= home.form_factor
-        expected_away *= away.form_factor
-        
-        # Final adjustments
-        expected_home = max(0.2, min(3.0, expected_home))
-        expected_away = max(0.2, min(3.0, expected_away))
+        # Determine prediction
+        if home_win > away_win and home_win > draw:
+            prediction = "Home Win"
+        elif away_win > home_win and away_win > draw:
+            prediction = "Away Win"
+        else:
+            prediction = "Draw"
         
         return {
-            'home_goals': round(expected_home, 2),
-            'away_goals': round(expected_away, 2),
-            'total_goals': round(expected_home + expected_away, 2)
+            'home_win': round(home_win, 3),
+            'draw': round(draw, 3),
+            'away_win': round(away_win, 3),
+            'prediction': prediction,
+            'confidence': self._get_confidence_level(max(home_win, draw, away_win))
         }
     
-    def analyze_matchup_patterns(self, home: TeamMetrics, away: TeamMetrics) -> List[str]:
+    def _get_confidence_level(self, probability: float) -> str:
         """
-        Identify key matchup patterns
+        Convert probability to confidence level
         """
-        patterns = []
-        
-        # Defensive battle pattern
-        if (away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE'] and 
-            home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']):
-            patterns.append("Defensive battle - Low scoring expected")
-        
-        # Clean sheet pattern
-        if away.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
-            patterns.append(f"Away team high clean sheet rate ({away.clean_sheet_pct:.0%})")
-        
-        # Offensive struggle pattern
-        if (home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE'] and
-            away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']):
-            patterns.append("Both teams struggle to score")
-        
-        # Parity pattern
-        if abs(home.ppg - away.ppg) <= self.THRESHOLDS['CLOSE_PPG']:
-            patterns.append("Close matchup - Draw likely")
-        
-        return patterns
-    
-    # ========== PRIVATE HELPER METHODS ==========
-    
-    def _calculate_win_probability_from_ppg(self, team_ppg: float, opponent_ppg: float, is_home: bool) -> float:
-        """Convert PPG differential to win probability"""
-        base_diff = team_ppg - opponent_ppg
-        
-        if is_home:
-            base_diff += 0.3  # Home advantage
-        
-        # Convert to probability (simplified)
-        if base_diff > 1.0:
-            return 0.55
-        elif base_diff > 0.5:
-            return 0.45
-        elif base_diff > 0:
-            return 0.40
-        elif base_diff > -0.5:
-            return 0.35
-        else:
-            return 0.30
-    
-    def _poisson_over_25(self, lambda_total: float) -> float:
-        """Poisson probability for Over 2.5 goals"""
-        if lambda_total <= 0:
-            return 0.05
-        
-        # Simple Poisson calculation
-        prob_0 = math.exp(-lambda_total)
-        prob_1 = lambda_total * math.exp(-lambda_total)
-        prob_2 = (lambda_total ** 2) * math.exp(-lambda_total) / 2
-        
-        prob_under = prob_0 + prob_1 + prob_2
-        prob_over = 1 - prob_under
-        
-        return max(0.05, min(0.95, prob_over))
-    
-    def _calculate_confidence(self, probability: float) -> str:
-        """Convert probability to confidence level"""
-        if probability >= 0.75:
-            return 'High'
-        elif probability >= 0.65:
-            return 'Medium'
+        if probability >= 0.70:
+            return "High"
+        elif probability >= 0.60:
+            return "Medium"
         elif probability >= 0.55:
-            return 'Low'
+            return "Low"
         else:
-            return 'Very Low'
+            return "Very Low"
