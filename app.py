@@ -1,6 +1,6 @@
 """
 Football Predictor Pro v2.0 with xG Integration
-Complete single-file implementation
+Fixed version with proper input handling
 """
 
 import streamlit as st
@@ -654,6 +654,11 @@ def main():
             league_avg_xg=1.34,
             home_advantage=1.15
         ),
+        "Championship": MatchContext(
+            league_avg_goals=2.55,
+            league_avg_xg=1.28,
+            home_advantage=1.16
+        ),
         "Other": MatchContext()
     }
     
@@ -665,7 +670,7 @@ def main():
         league = st.selectbox(
             "Select League",
             list(LEAGUE_CONTEXTS.keys()),
-            index=5  # Default to Liga NOS
+            index=6  # Default to Championship
         )
         engine.context = LEAGUE_CONTEXTS[league]
         
@@ -679,16 +684,16 @@ def main():
         # Quick examples
         st.header("📋 Examples")
         
-        if st.button("Example 1: Vitória vs Gil Vicente (with xG)"):
-            set_example_1()
+        if st.button("Example: Southampton vs West Brom"):
+            set_example_southampton()
             st.rerun()
         
-        if st.button("Example 2: Strong Defense vs Weak Attack"):
-            set_example_2()
+        if st.button("Example: Strong Defense vs Weak Attack"):
+            set_example_defense()
             st.rerun()
         
-        if st.button("Example 3: xG Mismatch Case"):
-            set_example_3()
+        if st.button("Example: xG Mismatch Case"):
+            set_example_xg_mismatch()
             st.rerun()
         
         # Info
@@ -708,12 +713,12 @@ def main():
     with col_names[0]:
         home_name = st.text_input(
             "🏠 Home Team",
-            value=st.session_state.get('home_name', 'Vitória Guimarães')
+            value=st.session_state.get('home_name', 'Southampton')
         )
     with col_names[1]:
         away_name = st.text_input(
             "🚗 Away Team",
-            value=st.session_state.get('away_name', 'Gil Vicente')
+            value=st.session_state.get('away_name', 'West Brom')
         )
     
     # Main tabs for organized input
@@ -731,7 +736,7 @@ def main():
                 home_attack = st.number_input(
                     "Goals/Game", 
                     0.0, 5.0, 
-                    value=st.session_state.get('home_attack', 1.83), 
+                    value=float(st.session_state.get('home_attack', 1.44)), 
                     step=0.1,
                     key="home_attack"
                 )
@@ -739,7 +744,7 @@ def main():
                 home_defense = st.number_input(
                     "Conceded/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('home_defense', 1.33), 
+                    value=float(st.session_state.get('home_defense', 0.89)), 
                     step=0.1,
                     key="home_defense"
                 )
@@ -750,7 +755,7 @@ def main():
                 home_ppg = st.number_input(
                     "Points/Game", 
                     0.0, 3.0,
-                    value=st.session_state.get('home_ppg', 1.83), 
+                    value=float(st.session_state.get('home_ppg', 1.67)), 
                     step=0.1,
                     key="home_ppg"
                 )
@@ -758,24 +763,25 @@ def main():
                 home_games = st.number_input(
                     "Games Played", 
                     1, 40,
-                    value=st.session_state.get('home_games', 6),
+                    value=int(st.session_state.get('home_games', 19)),
                     key="home_games"
                 )
             
-            # Performance metrics
+            # Performance metrics - FIXED: Using number inputs instead of sliders
+            st.write("**Performance Metrics**")
             col_perf = st.columns(2)
             with col_perf[0]:
-                home_cs = st.slider(
+                home_cs = st.number_input(
                     "Clean Sheet %", 
                     0, 100,
-                    value=st.session_state.get('home_cs', 17),
+                    value=int(st.session_state.get('home_cs', 33)),
                     key="home_cs"
                 )
             with col_perf[1]:
-                home_fts = st.slider(
+                home_fts = st.number_input(
                     "Fail to Score %", 
                     0, 100,
-                    value=st.session_state.get('home_fts', 17),
+                    value=int(st.session_state.get('home_fts', 33)),
                     key="home_fts"
                 )
         
@@ -788,7 +794,7 @@ def main():
                 away_attack = st.number_input(
                     "Goals/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('away_attack', 1.50), 
+                    value=float(st.session_state.get('away_attack', 1.00)), 
                     step=0.1,
                     key="away_attack"
                 )
@@ -796,7 +802,7 @@ def main():
                 away_defense = st.number_input(
                     "Conceded/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('away_defense', 0.50), 
+                    value=float(st.session_state.get('away_defense', 1.70)), 
                     step=0.1,
                     key="away_defense"
                 )
@@ -807,7 +813,7 @@ def main():
                 away_ppg = st.number_input(
                     "Points/Game", 
                     0.0, 3.0,
-                    value=st.session_state.get('away_ppg', 1.83), 
+                    value=float(st.session_state.get('away_ppg', 0.90)), 
                     step=0.1,
                     key="away_ppg"
                 )
@@ -815,24 +821,25 @@ def main():
                 away_games = st.number_input(
                     "Games Played", 
                     1, 40,
-                    value=st.session_state.get('away_games', 6),
+                    value=int(st.session_state.get('away_games', 19)),
                     key="away_games"
                 )
             
-            # Performance metrics
+            # Performance metrics - FIXED: Using number inputs instead of sliders
+            st.write("**Performance Metrics**")
             col_perf = st.columns(2)
             with col_perf[0]:
-                away_cs = st.slider(
+                away_cs = st.number_input(
                     "Clean Sheet %", 
                     0, 100,
-                    value=st.session_state.get('away_cs', 67),
+                    value=int(st.session_state.get('away_cs', 20)),
                     key="away_cs"
                 )
             with col_perf[1]:
-                away_fts = st.slider(
+                away_fts = st.number_input(
                     "Fail to Score %", 
                     0, 100,
-                    value=st.session_state.get('away_fts', 17),
+                    value=int(st.session_state.get('away_fts', 30)),
                     key="away_fts"
                 )
     
@@ -849,7 +856,7 @@ def main():
                 home_xg_for = st.number_input(
                     "xG Created/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('home_xg_for', 1.95), 
+                    value=float(st.session_state.get('home_xg_for', 1.79)), 
                     step=0.1,
                     key="home_xg_for"
                 )
@@ -857,7 +864,7 @@ def main():
                 home_xg_against = st.number_input(
                     "xG Conceded/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('home_xg_against', 1.45), 
+                    value=float(st.session_state.get('home_xg_against', 1.14)), 
                     step=0.1,
                     key="home_xg_against"
                 )
@@ -878,7 +885,7 @@ def main():
                 away_xg_for = st.number_input(
                     "xG Created/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('away_xg_for', 1.30), 
+                    value=float(st.session_state.get('away_xg_for', 1.20)), 
                     step=0.1,
                     key="away_xg_for"
                 )
@@ -886,7 +893,7 @@ def main():
                 away_xg_against = st.number_input(
                     "xG Conceded/Game", 
                     0.0, 5.0,
-                    value=st.session_state.get('away_xg_against', 0.80), 
+                    value=float(st.session_state.get('away_xg_against', 1.90)), 
                     step=0.1,
                     key="away_xg_against"
                 )
@@ -910,14 +917,14 @@ def main():
                 home_goals5 = st.number_input(
                     "Goals (Last 5)", 
                     0, 30,
-                    value=st.session_state.get('home_goals5', 7),
+                    value=int(st.session_state.get('home_goals5', 9)),
                     key="home_goals5"
                 )
             with col_form[1]:
                 home_conceded5 = st.number_input(
                     "Conceded (Last 5)", 
                     0, 30,
-                    value=st.session_state.get('home_conceded5', 6),
+                    value=int(st.session_state.get('home_conceded5', 4)),
                     key="home_conceded5"
                 )
             
@@ -927,6 +934,8 @@ def main():
                 st.success(f"Good recent form: {home_avg_5:.2f} goals/game (↑ from {home_attack:.2f})")
             elif home_avg_5 < home_attack * 0.8:
                 st.error(f"Poor recent form: {home_avg_5:.2f} goals/game (↓ from {home_attack:.2f})")
+            else:
+                st.info(f"Consistent form: {home_avg_5:.2f} goals/game")
         
         with col2:
             st.subheader(f"{away_name} Recent Form")
@@ -936,14 +945,14 @@ def main():
                 away_goals5 = st.number_input(
                     "Goals (Last 5)", 
                     0, 30,
-                    value=st.session_state.get('away_goals5', 6),
+                    value=int(st.session_state.get('away_goals5', 5)),
                     key="away_goals5"
                 )
             with col_form[1]:
                 away_conceded5 = st.number_input(
                     "Conceded (Last 5)", 
                     0, 30,
-                    value=st.session_state.get('away_conceded5', 3),
+                    value=int(st.session_state.get('away_conceded5', 9)),
                     key="away_conceded5"
                 )
             
@@ -953,22 +962,24 @@ def main():
                 st.success(f"Good recent form: {away_avg_5:.2f} goals/game (↑ from {away_attack:.2f})")
             elif away_avg_5 < away_attack * 0.8:
                 st.error(f"Poor recent form: {away_avg_5:.2f} goals/game (↓ from {away_attack:.2f})")
+            else:
+                st.info(f"Consistent form: {away_avg_5:.2f} goals/game")
     
-    # H2H Section
+    # H2H Section - FIXED: Using number inputs
     with st.expander("Head-to-Head Data (Optional)"):
         col_h2h = st.columns(2)
         with col_h2h[0]:
-            h2h_btts = st.slider(
+            h2h_btts = st.number_input(
                 "H2H BTTS %", 
                 0, 100,
-                value=st.session_state.get('h2h_btts', 62),
+                value=int(st.session_state.get('h2h_btts', 60)),
                 key="h2h_btts"
             )
         with col_h2h[1]:
             h2h_meetings = st.number_input(
                 "Total H2H Meetings",
                 0, 100,
-                value=st.session_state.get('h2h_meetings', 5),
+                value=int(st.session_state.get('h2h_meetings', 5)),
                 key="h2h_meetings"
             )
     
@@ -1189,36 +1200,36 @@ def main():
             with col3:
                 st.metric("Predicted Total", f"{eg_home + eg_away:.2f}")
 
-def set_example_1():
-    """Example: Vitória vs Gil Vicente with xG"""
-    st.session_state.home_name = "Vitória Guimarães"
-    st.session_state.home_attack = 1.83
-    st.session_state.home_defense = 1.33
-    st.session_state.home_ppg = 1.83
-    st.session_state.home_games = 6
-    st.session_state.home_cs = 17
-    st.session_state.home_fts = 17
-    st.session_state.home_xg_for = 1.95
-    st.session_state.home_xg_against = 1.45
-    st.session_state.home_goals5 = 7
-    st.session_state.home_conceded5 = 6
+def set_example_southampton():
+    """Example: Southampton vs West Brom with realistic data"""
+    st.session_state.home_name = "Southampton"
+    st.session_state.home_attack = 1.44
+    st.session_state.home_defense = 0.89
+    st.session_state.home_ppg = 1.67
+    st.session_state.home_games = 19
+    st.session_state.home_cs = 33
+    st.session_state.home_fts = 33
+    st.session_state.home_xg_for = 1.79
+    st.session_state.home_xg_against = 1.14
+    st.session_state.home_goals5 = 9
+    st.session_state.home_conceded5 = 4
     
-    st.session_state.away_name = "Gil Vicente"
-    st.session_state.away_attack = 1.50
-    st.session_state.away_defense = 0.50
-    st.session_state.away_ppg = 1.83
-    st.session_state.away_games = 6
-    st.session_state.away_cs = 67
-    st.session_state.away_fts = 17
-    st.session_state.away_xg_for = 1.30
-    st.session_state.away_xg_against = 0.80
-    st.session_state.away_goals5 = 6
-    st.session_state.away_conceded5 = 3
+    st.session_state.away_name = "West Brom"
+    st.session_state.away_attack = 1.00
+    st.session_state.away_defense = 1.70
+    st.session_state.away_ppg = 0.90
+    st.session_state.away_games = 19
+    st.session_state.away_cs = 20
+    st.session_state.away_fts = 30
+    st.session_state.away_xg_for = 1.20
+    st.session_state.away_xg_against = 1.90
+    st.session_state.away_goals5 = 5
+    st.session_state.away_conceded5 = 9
     
-    st.session_state.h2h_btts = 62
+    st.session_state.h2h_btts = 60
     st.session_state.h2h_meetings = 5
 
-def set_example_2():
+def set_example_defense():
     """Example: Strong Defense vs Weak Attack"""
     st.session_state.home_name = "Team A"
     st.session_state.home_attack = 0.8
@@ -1247,7 +1258,7 @@ def set_example_2():
     st.session_state.h2h_btts = 40
     st.session_state.h2h_meetings = 3
 
-def set_example_3():
+def set_example_xg_mismatch():
     """Example: xG Mismatch Case"""
     st.session_state.home_name = "Team X"
     st.session_state.home_attack = 1.0
