@@ -1,70 +1,35 @@
 """
-app.py - User Interface and Data Input
-Handles data collection, display, and user interaction
+app.py - Streamlit Football Predictor App
+Simple, working version
 """
 
 import streamlit as st
 import pandas as pd
-from typing import Dict, Optional
 from engine import PredictionEngine, TeamMetrics, MatchContext
 
-class FootballPredictorApp:
-    """
-    Streamlit app for football predictions
-    Handles UI, data input, and displays predictions
-    """
+# Set page config FIRST
+st.set_page_config(
+    page_title="Football Match Predictor",
+    page_icon="⚽",
+    layout="wide"
+)
+
+def main():
+    st.title("⚽ Football Match Predictor")
+    st.markdown("Predict match outcomes based on team statistics")
     
-    def __init__(self):
-        st.set_page_config(
-            page_title="Football Match Predictor",
-            page_icon="⚽",
-            layout="wide"
-        )
-        self.engine = PredictionEngine()
-        
-    def run(self):
-        """Main app runner"""
-        st.title("⚽ Football Match Predictor")
-        st.markdown("### Based on FootyStats Data Analysis")
-        
-        # Sidebar for league settings
-        with st.sidebar:
-            st.header("⚙️ League Settings")
-            self._setup_league_settings()
-        
-        # Main prediction interface
-        st.header("📊 Match Prediction")
-        
-        # Two-column layout for team inputs
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🏠 Home Team")
-            home_metrics = self._get_team_inputs(is_home=True)
-        
-        with col2:
-            st.subheader("🚗 Away Team")
-            away_metrics = self._get_team_inputs(is_home=False)
-        
-        # H2H and additional inputs
-        st.subheader("🤝 Head-to-Head History")
-        h2h_btts = st.slider("H2H BTTS Percentage", 0, 100, 50) / 100
-        
-        # Prediction button
-        if st.button("🎯 Generate Prediction", type="primary"):
-            if home_metrics and away_metrics:
-                self._display_predictions(home_metrics, away_metrics, h2h_btts)
-            else:
-                st.error("Please fill in all required fields for both teams.")
+    # Initialize engine
+    engine = PredictionEngine()
     
-    def _setup_league_settings(self):
-        """Configure league parameters in sidebar"""
+    # Sidebar for settings
+    with st.sidebar:
+        st.header("⚙️ Settings")
         league = st.selectbox(
             "Select League",
             ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1", "Liga NOS", "Other"]
         )
         
-        # Set league context based on selection
+        # Set league context
         league_contexts = {
             "Premier League": MatchContext(league_avg_goals=2.7, home_advantage=1.15),
             "La Liga": MatchContext(league_avg_goals=2.5, home_advantage=1.18),
@@ -74,155 +39,144 @@ class FootballPredictorApp:
             "Liga NOS": MatchContext(league_avg_goals=2.68, home_advantage=1.15),
         }
         
-        self.engine.context = league_contexts.get(league, MatchContext())
+        engine.context = league_contexts.get(league, MatchContext())
         
-        st.info(f"League: {league}")
-        st.caption(f"Avg Goals: {self.engine.context.league_avg_goals}")
+        st.info(f"Selected: {league}")
+        st.write(f"Avg Goals: {engine.context.league_avg_goals}")
     
-    def _get_team_inputs(self, is_home: bool = True) -> Optional[TeamMetrics]:
-        """Get team statistics inputs from user"""
-        
-        # Team name
-        prefix = "Home" if is_home else "Away"
-        team_name = st.text_input(f"{prefix} Team Name", value="Team A" if is_home else "Team B")
-        
-        # Create expander for detailed stats
-        with st.expander(f"📈 {prefix} Team Statistics", expanded=True):
-            # Attack and defense
-            col1, col2 = st.columns(2)
-            with col1:
-                attack = st.number_input(
-                    f"Goals Scored per Game",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=1.5 if is_home else 1.3,
-                    step=0.1,
-                    key=f"{prefix}_attack"
-                )
-            with col2:
-                defense = st.number_input(
-                    f"Goals Conceded per Game",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=1.3 if is_home else 1.0,
-                    step=0.1,
-                    key=f"{prefix}_defense"
-                )
-            
-            # Form and PPG
-            col3, col4 = st.columns(2)
-            with col3:
-                ppg = st.number_input(
-                    f"Points per Game",
-                    min_value=0.0,
-                    max_value=3.0,
-                    value=1.8 if is_home else 1.8,
-                    step=0.1,
-                    key=f"{prefix}_ppg"
-                )
-            with col4:
-                form = st.slider(
-                    f"Recent Form (1 = poor, 1.2 = excellent)",
-                    min_value=0.8,
-                    max_value=1.2,
-                    value=1.0,
-                    step=0.05,
-                    key=f"{prefix}_form"
-                )
-            
-            # Clean sheets and failed to score
-            col5, col6 = st.columns(2)
-            with col5:
-                clean_sheet = st.slider(
-                    f"Clean Sheet %",
-                    min_value=0,
-                    max_value=100,
-                    value=20 if is_home else 60,
-                    key=f"{prefix}_cs"
-                ) / 100
-            with col6:
-                failed_score = st.slider(
-                    f"Failed to Score %",
-                    min_value=0,
-                    max_value=100,
-                    value=20 if is_home else 20,
-                    key=f"{prefix}_fts"
-                ) / 100
-            
-            # BTTS percentage
-            btts_pct = st.slider(
-                f"BTTS % in matches",
-                min_value=0,
-                max_value=100,
-                value=60 if is_home else 40,
-                key=f"{prefix}_btts"
-            ) / 100
-        
-        # Return TeamMetrics object
-        return TeamMetrics(
-            attack_strength=attack,
-            defense_strength=defense,
-            form_factor=form,
-            clean_sheet_pct=clean_sheet,
-            failed_to_score_pct=failed_score,
-            ppg=ppg,
-            btts_pct=btts_pct
-        )
+    # Main content
+    st.header("📊 Match Details")
     
-    def _display_predictions(self, home: TeamMetrics, away: TeamMetrics, h2h_btts: float):
-        """Display all predictions in a nice format"""
+    # Two columns for team inputs
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🏠 Home Team")
+        home_team_name = st.text_input("Team Name", value="Vitória Guimarães", key="home_name")
         
-        # Calculate predictions
-        result_pred = self.engine.predict_match_result(home, away)
-        over_under_pred = self.engine.predict_over_under(home, away)
-        btts_pred = self.engine.predict_btts(home, away, h2h_btts)
-        expected_goals = self.engine.calculate_expected_goals(home, away)
-        patterns = self.engine.analyze_matchup_patterns(home, away)
+        st.write("**Attack/Defense Stats**")
+        home_attack = st.number_input("Goals Scored per Game", 
+                                     min_value=0.0, max_value=5.0, 
+                                     value=1.83, step=0.1, key="home_attack")
+        home_defense = st.number_input("Goals Conceded per Game", 
+                                      min_value=0.0, max_value=5.0, 
+                                      value=1.33, step=0.1, key="home_defense")
+        home_ppg = st.number_input("Points per Game", 
+                                  min_value=0.0, max_value=3.0, 
+                                  value=1.83, step=0.1, key="home_ppg")
         
-        # Header
+        st.write("**Performance Metrics**")
+        home_clean_sheet = st.slider("Clean Sheet %", 0, 100, 17, key="home_cs") / 100
+        home_failed_score = st.slider("Failed to Score %", 0, 100, 17, key="home_fts") / 100
+        home_form = st.slider("Recent Form", 0.8, 1.2, 1.0, step=0.05, key="home_form")
+    
+    with col2:
+        st.subheader("🚗 Away Team")
+        away_team_name = st.text_input("Team Name", value="Gil Vicente", key="away_name")
+        
+        st.write("**Attack/Defense Stats**")
+        away_attack = st.number_input("Goals Scored per Game", 
+                                     min_value=0.0, max_value=5.0, 
+                                     value=1.50, step=0.1, key="away_attack")
+        away_defense = st.number_input("Goals Conceded per Game", 
+                                      min_value=0.0, max_value=5.0, 
+                                      value=0.50, step=0.1, key="away_defense")
+        away_ppg = st.number_input("Points per Game", 
+                                  min_value=0.0, max_value=3.0, 
+                                  value=1.83, step=0.1, key="away_ppg")
+        
+        st.write("**Performance Metrics**")
+        away_clean_sheet = st.slider("Clean Sheet %", 0, 100, 67, key="away_cs") / 100
+        away_failed_score = st.slider("Failed to Score %", 0, 100, 17, key="away_fts") / 100
+        away_form = st.slider("Recent Form", 0.8, 1.2, 1.0, step=0.05, key="away_form")
+    
+    # H2H Section
+    st.subheader("🤝 Head-to-Head")
+    h2h_btts = st.slider("H2H BTTS %", 0, 100, 62) / 100
+    
+    # Create TeamMetrics objects
+    home_metrics = TeamMetrics(
+        attack_strength=home_attack,
+        defense_strength=home_defense,
+        form_factor=home_form,
+        clean_sheet_pct=home_clean_sheet,
+        failed_to_score_pct=home_failed_score,
+        ppg=home_ppg,
+        btts_pct=0.5  # Default
+    )
+    
+    away_metrics = TeamMetrics(
+        attack_strength=away_attack,
+        defense_strength=away_defense,
+        form_factor=away_form,
+        clean_sheet_pct=away_clean_sheet,
+        failed_to_score_pct=away_failed_score,
+        ppg=away_ppg,
+        btts_pct=0.5  # Default
+    )
+    
+    # Prediction Button
+    if st.button("🎯 Generate Predictions", type="primary"):
+        
+        # Calculate all predictions
+        result_pred = engine.predict_match_result(home_metrics, away_metrics)
+        over_under_pred = engine.predict_over_under(home_metrics, away_metrics)
+        btts_pred = engine.predict_btts(home_metrics, away_metrics, h2h_btts)
+        expected_goals = engine.calculate_expected_goals(home_metrics, away_metrics)
+        patterns = engine.analyze_matchup_patterns(home_metrics, away_metrics)
+        
+        # Display results
         st.success("✅ Predictions Generated!")
+        
+        # Matchup info
+        st.subheader(f"🎮 {home_team_name} vs {away_team_name}")
         
         # Display in columns
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.subheader("🎯 Match Result")
+            st.markdown("**📊 Match Result**")
             pred = result_pred['prediction'].value
+            st.metric("Prediction", pred)
+            
+            # Progress bars for probabilities
             home_prob = result_pred['probabilities']['home_win']
             draw_prob = result_pred['probabilities']['draw']
             away_prob = result_pred['probabilities']['away_win']
             
-            st.metric("Prediction", pred)
             st.progress(home_prob, text=f"Home: {home_prob:.1%}")
             st.progress(draw_prob, text=f"Draw: {draw_prob:.1%}")
             st.progress(away_prob, text=f"Away: {away_prob:.1%}")
         
         with col2:
-            st.subheader("📈 Over/Under 2.5")
+            st.markdown("**📈 Over/Under 2.5**")
             pred = over_under_pred['prediction'].value
             conf = over_under_pred['confidence']
+            st.metric("Prediction", f"{pred}")
+            st.metric("Confidence", f"{conf}")
+            st.metric("Expected Goals", f"{over_under_pred['expected_goals']}")
+            
+            # Progress bars
             over_prob = over_under_pred['probabilities']['over']
             under_prob = over_under_pred['probabilities']['under']
-            exp_goals = over_under_pred['expected_goals']
-            
-            st.metric("Prediction", f"{pred} ({conf})")
-            st.metric("Expected Goals", exp_goals)
             st.progress(over_prob, text=f"Over: {over_prob:.1%}")
             st.progress(under_prob, text=f"Under: {under_prob:.1%}")
         
         with col3:
-            st.subheader("⚔️ Both Teams to Score")
+            st.markdown("**⚔️ Both Teams to Score**")
             pred = btts_pred['prediction'].value
             conf = btts_pred['confidence']
+            st.metric("Prediction", f"{pred}")
+            st.metric("Confidence", f"{conf}")
+            
+            # Progress bars
             yes_prob = btts_pred['probabilities']['btts_yes']
             no_prob = btts_pred['probabilities']['btts_no']
-            
-            st.metric("Prediction", f"{pred} ({conf})")
             st.progress(yes_prob, text=f"Yes: {yes_prob:.1%}")
             st.progress(no_prob, text=f"No: {no_prob:.1%}")
         
-        # Expected goals breakdown
-        st.subheader("🎯 Expected Goals Breakdown")
+        # Expected Goals Breakdown
+        st.subheader("🎯 Expected Goals Analysis")
         eg_col1, eg_col2, eg_col3 = st.columns(3)
         
         with eg_col1:
@@ -232,30 +186,33 @@ class FootballPredictorApp:
         with eg_col3:
             st.metric("Total Expected Goals", expected_goals['total_goals'])
         
-        # Matchup patterns
+        # Matchup Patterns
         if patterns:
-            st.subheader("🔍 Matchup Patterns Detected")
+            st.subheader("🔍 Detected Patterns")
             for pattern in patterns:
                 st.info(f"• {pattern}")
         
-        # Statistical summary
-        st.subheader("📊 Statistical Summary")
+        # Statistical Summary Table
+        st.subheader("📋 Statistical Summary")
         
         summary_data = {
-            "Metric": ["Defense Quality", "Attack Strength", "Clean Sheet %", "Failed to Score %", "PPG"],
-            "Home": [
-                f"{home.defense_strength:.2f}",
-                f"{home.attack_strength:.2f}",
-                f"{home.clean_sheet_pct:.0%}",
-                f"{home.failed_to_score_pct:.0%}",
-                f"{home.ppg:.2f}"
+            "Metric": ["Goals Scored/Game", "Goals Conceded/Game", "Clean Sheet %", 
+                      "Failed to Score %", "Points/Game", "Recent Form"],
+            home_team_name: [
+                f"{home_attack:.2f}",
+                f"{home_defense:.2f}",
+                f"{home_clean_sheet:.0%}",
+                f"{home_failed_score:.0%}",
+                f"{home_ppg:.2f}",
+                f"{home_form:.2f}"
             ],
-            "Away": [
-                f"{away.defense_strength:.2f}",
-                f"{away.attack_strength:.2f}",
-                f"{away.clean_sheet_pct:.0%}",
-                f"{away.failed_to_score_pct:.0%}",
-                f"{away.ppg:.2f}"
+            away_team_name: [
+                f"{away_attack:.2f}",
+                f"{away_defense:.2f}",
+                f"{away_clean_sheet:.0%}",
+                f"{away_failed_score:.0%}",
+                f"{away_ppg:.2f}",
+                f"{away_form:.2f}"
             ]
         }
         
@@ -264,53 +221,27 @@ class FootballPredictorApp:
         # Key Insights
         st.subheader("💡 Key Insights")
         
-        insights = []
-        
-        # Defensive strength insight
-        if away.defense_strength <= 0.6:
-            insights.append("Away team has **very strong defense** (≤ 0.6 goals conceded/game)")
+        # Defense insight
+        if away_defense <= 0.6:
+            st.write(f"• **Strong Away Defense**: {away_team_name} concedes only {away_defense:.2f} goals per game away")
         
         # Clean sheet insight
-        if away.clean_sheet_pct >= 0.5:
-            insights.append(f"Away team keeps clean sheets in **{away.clean_sheet_pct:.0%}** of matches")
-        
-        # Parity insight
-        if abs(home.ppg - away.ppg) <= 0.2:
-            insights.append("Close matchup - teams have similar points per game")
+        if away_clean_sheet >= 0.5:
+            st.write(f"• **High Clean Sheet Rate**: {away_team_name} keeps clean sheets in {away_clean_sheet:.0%} of away matches")
         
         # Expected goals insight
         if expected_goals['total_goals'] < 2.0:
-            insights.append("**Very low scoring** match expected")
+            st.write(f"• **Low Scoring Match**: Only {expected_goals['total_goals']:.2f} total goals expected")
         elif expected_goals['total_goals'] < 2.5:
-            insights.append("**Low scoring** match expected")
+            st.write(f"• **Below Average Scoring**: {expected_goals['total_goals']:.2f} goals expected (league avg: {engine.context.league_avg_goals})")
         
-        for insight in insights:
-            st.write(f"• {insight}")
+        # Parity insight
+        if abs(home_ppg - away_ppg) <= 0.2:
+            st.write(f"• **Close Matchup**: Both teams have similar PPG ({home_ppg:.2f} vs {away_ppg:.2f})")
     
-    def load_example_data(self):
-        """Load example data for demonstration"""
-        st.sidebar.subheader("📋 Example Data")
-        
-        if st.sidebar.button("Load Vitória vs Gil Vicente Example"):
-            # This would load the actual data from our analysis
-            st.session_state.home_attack = 1.83
-            st.session_state.home_defense = 1.33
-            st.session_state.home_ppg = 1.83
-            st.session_state.home_cs = 17
-            st.session_state.home_fts = 17
-            
-            st.session_state.away_attack = 1.50
-            st.session_state.away_defense = 0.50
-            st.session_state.away_ppg = 1.83
-            st.session_state.away_cs = 67
-            st.session_state.away_fts = 17
-            
-            st.rerun()
-
-def main():
-    """Main entry point"""
-    app = FootballPredictorApp()
-    app.run()
+    # Example Button
+    if st.sidebar.button("Load Example Match"):
+        st.rerun()
 
 if __name__ == "__main__":
     main()
