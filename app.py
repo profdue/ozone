@@ -88,18 +88,18 @@ def main():
         attack_def_col = st.columns(2)
         with attack_def_col[0]:
             home_attack = st.number_input("Goals/Game", 0.0, 5.0, 
-                                         value=st.session_state.get('home_attack', 1.5), 0.1,
+                                         value=st.session_state.get('home_attack', 1.5), step=0.1,
                                          key="home_attack")
         with attack_def_col[1]:
             home_defense = st.number_input("Conceded/Game", 0.0, 5.0,
-                                          value=st.session_state.get('home_defense', 1.0), 0.1,
+                                          value=st.session_state.get('home_defense', 1.0), step=0.1,
                                           key="home_defense")
         
         # Points and games
         points_col = st.columns(2)
         with points_col[0]:
             home_ppg = st.number_input("Points/Game", 0.0, 3.0,
-                                      value=st.session_state.get('home_ppg', 1.5), 0.1,
+                                      value=st.session_state.get('home_ppg', 1.5), step=0.1,
                                       key="home_ppg")
         with points_col[1]:
             home_games = st.number_input("Games Played", 1, 40,
@@ -137,18 +137,18 @@ def main():
         attack_def_col = st.columns(2)
         with attack_def_col[0]:
             away_attack = st.number_input("Goals/Game", 0.0, 5.0,
-                                         value=st.session_state.get('away_attack', 1.5), 0.1,
+                                         value=st.session_state.get('away_attack', 1.5), step=0.1,
                                          key="away_attack")
         with attack_def_col[1]:
             away_defense = st.number_input("Conceded/Game", 0.0, 5.0,
-                                          value=st.session_state.get('away_defense', 1.0), 0.1,
+                                          value=st.session_state.get('away_defense', 1.0), step=0.1,
                                           key="away_defense")
         
         # Points and games
         points_col = st.columns(2)
         with points_col[0]:
             away_ppg = st.number_input("Points/Game", 0.0, 3.0,
-                                      value=st.session_state.get('away_ppg', 1.5), 0.1,
+                                      value=st.session_state.get('away_ppg', 1.5), step=0.1,
                                       key="away_ppg")
         with points_col[1]:
             away_games = st.number_input("Games Played", 1, 40,
