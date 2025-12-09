@@ -1,6 +1,5 @@
 """
-engine.py - Pure prediction logic engine
-No UI, no data input - just mathematical calculations
+engine.py - Pure prediction logic engine with automated form calculation
 """
 
 from typing import Dict, Tuple, List, Optional
@@ -29,8 +28,9 @@ class TeamMetrics:
     attack_strength: float
     # Defense metrics (goals conceded per game, lower = better)
     defense_strength: float
-    # Form metrics (0-1, higher = better recent form)
-    form_factor: float
+    # Recent form data (last 5 matches)
+    goals_scored_last_5: int
+    goals_conceded_last_5: int
     # Clean sheet percentage (0-1)
     clean_sheet_pct: float
     # Failed to score percentage (0-1)
@@ -54,8 +54,7 @@ class MatchContext:
 
 class PredictionEngine:
     """
-    PURE PREDICTION ENGINE
-    Only contains mathematical logic - no UI, no data collection
+    PURE PREDICTION ENGINE with automated form calculation
     """
     
     def __init__(self, context: Optional[MatchContext] = None):
@@ -74,14 +73,50 @@ class PredictionEngine:
             'CLOSE_PPG': 0.2,
         }
     
+    def calculate_form_factor(self, team: TeamMetrics) -> float:
+        """
+        AUTOMATED FORM CALCULATION
+        Compares recent performance (last 5) to season average
+        Returns multiplier between 0.8 and 1.2
+        """
+        # Calculate recent goals per game (last 5 matches)
+        recent_goals_pg = team.goals_scored_last_5 / 5
+        
+        # Get season average
+        season_avg = team.attack_strength
+        
+        # Avoid division by zero
+        if season_avg <= 0.1:
+            return 1.0
+        
+        # Calculate form ratio
+        form_ratio = recent_goals_pg / season_avg
+        
+        # Apply reasonable bounds (0.8 to 1.2)
+        bounded_form = max(0.8, min(1.2, form_ratio))
+        
+        # Weight the form adjustment (40% weight for recent form)
+        # This means form can adjust predictions by up to ±8%
+        weighted_form = 0.6 * 1.0 + 0.4 * bounded_form
+        
+        return weighted_form
+    
     def predict_match_result(self, home: TeamMetrics, away: TeamMetrics) -> Dict:
         """
         Predict 1X2 outcome with probabilities
         """
+        # Calculate automated form factors
+        home_form = self.calculate_form_factor(home)
+        away_form = self.calculate_form_factor(away)
+        
         # Base probabilities from PPG comparison
         home_win_base = self._calculate_win_probability_from_ppg(home.ppg, away.ppg, is_home=True)
         away_win_base = self._calculate_win_probability_from_ppg(away.ppg, home.ppg, is_home=False)
         draw_base = 0.35  # League average draw rate
+        
+        # Apply form adjustments
+        home_win_base *= home_form
+        away_win_base *= away_form
         
         # Adjust for defensive strength
         if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
@@ -116,6 +151,10 @@ class PredictionEngine:
                 'home_win': round(home_prob, 3),
                 'draw': round(draw_prob, 3),
                 'away_win': round(away_prob, 3)
+            },
+            'form_factors': {
+                'home': round(home_form, 2),
+                'away': round(away_form, 2)
             }
         }
     
@@ -123,14 +162,18 @@ class PredictionEngine:
         """
         Predict Over/Under 2.5 goals
         """
+        # Calculate automated form factors
+        home_form = self.calculate_form_factor(home)
+        away_form = self.calculate_form_factor(away)
+        
         # Calculate expected goals
         expected_home_goals = (home.attack_strength + away.defense_strength) / 2
         expected_away_goals = (away.attack_strength + home.defense_strength) / 2
-        expected_total = expected_home_goals + expected_away_goals
         
-        # Adjust for venue
-        expected_home_goals *= self.context.home_advantage
-        expected_away_goals *= self.context.away_penalty
+        # Apply venue and form adjustments
+        expected_home_goals *= self.context.home_advantage * home_form
+        expected_away_goals *= self.context.away_penalty * away_form
+        
         expected_total = expected_home_goals + expected_away_goals
         
         # Calculate Poisson probability
@@ -165,16 +208,24 @@ class PredictionEngine:
                 'over': round(prob_over, 3),
                 'under': round(prob_under, 3)
             },
-            'expected_goals': round(expected_total, 2)
+            'expected_goals': round(expected_total, 2),
+            'form_factors': {
+                'home': round(home_form, 2),
+                'away': round(away_form, 2)
+            }
         }
     
     def predict_btts(self, home: TeamMetrics, away: TeamMetrics, h2h_btts: Optional[float] = None) -> Dict:
         """
         Predict Both Teams to Score
         """
-        # Base probability from team stats
-        prob_home_scores = 1 - away.clean_sheet_pct
-        prob_away_scores = 1 - home.clean_sheet_pct
+        # Calculate automated form factors
+        home_form = self.calculate_form_factor(home)
+        away_form = self.calculate_form_factor(away)
+        
+        # Base probability from team stats with form adjustment
+        prob_home_scores = (1 - away.clean_sheet_pct) * home_form
+        prob_away_scores = (1 - home.clean_sheet_pct) * away_form
         prob_btts = prob_home_scores * prob_away_scores
         
         # Adjust for failed to score
@@ -210,6 +261,10 @@ class PredictionEngine:
             'probabilities': {
                 'btts_yes': round(prob_btts, 3),
                 'btts_no': round(prob_no_btts, 3)
+            },
+            'form_factors': {
+                'home': round(home_form, 2),
+                'away': round(away_form, 2)
             }
         }
     
@@ -217,17 +272,17 @@ class PredictionEngine:
         """
         Calculate detailed expected goals
         """
+        # Calculate automated form factors
+        home_form = self.calculate_form_factor(home)
+        away_form = self.calculate_form_factor(away)
+        
         # Base calculations
         expected_home = (home.attack_strength + away.defense_strength) / 2
         expected_away = (away.attack_strength + home.defense_strength) / 2
         
-        # Apply venue adjustments
-        expected_home *= self.context.home_advantage
-        expected_away *= self.context.away_penalty
-        
-        # Form adjustments
-        expected_home *= home.form_factor
-        expected_away *= away.form_factor
+        # Apply venue and form adjustments
+        expected_home *= self.context.home_advantage * home_form
+        expected_away *= self.context.away_penalty * away_form
         
         # Final adjustments
         expected_home = max(0.2, min(3.0, expected_home))
@@ -236,7 +291,11 @@ class PredictionEngine:
         return {
             'home_goals': round(expected_home, 2),
             'away_goals': round(expected_away, 2),
-            'total_goals': round(expected_home + expected_away, 2)
+            'total_goals': round(expected_home + expected_away, 2),
+            'form_factors': {
+                'home': round(home_form, 2),
+                'away': round(away_form, 2)
+            }
         }
     
     def analyze_matchup_patterns(self, home: TeamMetrics, away: TeamMetrics) -> List[str]:
@@ -244,6 +303,21 @@ class PredictionEngine:
         Identify key matchup patterns
         """
         patterns = []
+        
+        # Calculate form factors
+        home_form = self.calculate_form_factor(home)
+        away_form = self.calculate_form_factor(away)
+        
+        # Form patterns
+        if home_form >= 1.1:
+            patterns.append(f"Home team in good form (recent scoring: {home.goals_scored_last_5} in last 5)")
+        elif home_form <= 0.9:
+            patterns.append(f"Home team in poor form (recent scoring: {home.goals_scored_last_5} in last 5)")
+        
+        if away_form >= 1.1:
+            patterns.append(f"Away team in good form (recent scoring: {away.goals_scored_last_5} in last 5)")
+        elif away_form <= 0.9:
+            patterns.append(f"Away team in poor form (recent scoring: {away.goals_scored_last_5} in last 5)")
         
         # Defensive battle pattern
         if (away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE'] and 
