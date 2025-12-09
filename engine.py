@@ -1,5 +1,6 @@
 """
-engine.py - Pure prediction logic engine with automated form calculation
+engine.py - Pure prediction logic engine
+Fixed: No sliders, better form calculation, data-driven defaults
 """
 
 from typing import Dict, Tuple, List, Optional
@@ -39,6 +40,8 @@ class TeamMetrics:
     ppg: float
     # BTTS percentage (0-1)
     btts_pct: float
+    # Games played (for sample size awareness)
+    games_played: int = 10
 
 @dataclass
 class MatchContext:
@@ -46,7 +49,8 @@ class MatchContext:
     # League averages for normalization
     league_avg_goals: float = 2.68
     league_avg_btts: float = 0.46
-    league_avg_home_win: float = 0.45
+    league_avg_clean_sheets: float = 0.30
+    league_avg_failed_to_score: float = 0.30
     # Home advantage multiplier
     home_advantage: float = 1.15
     # Away penalty multiplier
@@ -54,13 +58,13 @@ class MatchContext:
 
 class PredictionEngine:
     """
-    PURE PREDICTION ENGINE with automated form calculation
+    PURE PREDICTION ENGINE with sample size awareness
     """
     
     def __init__(self, context: Optional[MatchContext] = None):
         self.context = context or MatchContext()
         
-        # Universal thresholds
+        # Universal thresholds with sample size awareness
         self.THRESHOLDS = {
             'STRONG_DEFENSE': 0.8,  # ≤ 0.8 goals conceded
             'VERY_STRONG_DEFENSE': 0.6,
@@ -71,13 +75,12 @@ class PredictionEngine:
             'HIGH_FAILED_TO_SCORE': 0.4,
             'SIGNIFICANT_PPG_DIFF': 0.5,
             'CLOSE_PPG': 0.2,
+            'MIN_GAMES_FOR_RELIABILITY': 6,
         }
     
     def calculate_form_factor(self, team: TeamMetrics) -> float:
         """
-        AUTOMATED FORM CALCULATION
-        Compares recent performance (last 5) to season average
-        Returns multiplier between 0.8 and 1.2
+        SMART FORM CALCULATION with sample size awareness
         """
         # Calculate recent goals per game (last 5 matches)
         recent_goals_pg = team.goals_scored_last_5 / 5
@@ -95,16 +98,54 @@ class PredictionEngine:
         # Apply reasonable bounds (0.8 to 1.2)
         bounded_form = max(0.8, min(1.2, form_ratio))
         
-        # Weight the form adjustment (40% weight for recent form)
-        # This means form can adjust predictions by up to ±8%
-        weighted_form = 0.6 * 1.0 + 0.4 * bounded_form
+        # Weight based on sample size reliability
+        if team.games_played < self.THRESHOLDS['MIN_GAMES_FOR_RELIABILITY']:
+            # Small sample: Trust recent form more (60%)
+            weight_recent = 0.6
+        else:
+            # Good sample: Balance (40% recent, 60% season)
+            weight_recent = 0.4
+        
+        # Weighted form adjustment
+        weighted_form = (1 - weight_recent) * 1.0 + weight_recent * bounded_form
         
         return weighted_form
+    
+    def adjust_for_sample_size(self, value: float, games_played: int, league_avg: float) -> float:
+        """
+        Bayesian adjustment for small sample sizes
+        Moves extreme values toward league average
+        """
+        if games_played >= self.THRESHOLDS['MIN_GAMES_FOR_RELIABILITY']:
+            return value
+        
+        # Weight: More games = more trust in data
+        weight_data = games_played / self.THRESHOLDS['MIN_GAMES_FOR_RELIABILITY']
+        weight_league = 1 - weight_data
+        
+        # Adjust toward league average
+        adjusted = (value * weight_data) + (league_avg * weight_league)
+        
+        return adjusted
     
     def predict_match_result(self, home: TeamMetrics, away: TeamMetrics) -> Dict:
         """
         Predict 1X2 outcome with probabilities
         """
+        # Adjust for sample size
+        home_attack_adj = self.adjust_for_sample_size(
+            home.attack_strength, home.games_played, self.context.league_avg_goals/2
+        )
+        home_defense_adj = self.adjust_for_sample_size(
+            home.defense_strength, home.games_played, self.context.league_avg_goals/2
+        )
+        away_attack_adj = self.adjust_for_sample_size(
+            away.attack_strength, away.games_played, self.context.league_avg_goals/2
+        )
+        away_defense_adj = self.adjust_for_sample_size(
+            away.defense_strength, away.games_played, self.context.league_avg_goals/2
+        )
+        
         # Calculate automated form factors
         home_form = self.calculate_form_factor(home)
         away_form = self.calculate_form_factor(away)
@@ -118,16 +159,22 @@ class PredictionEngine:
         home_win_base *= home_form
         away_win_base *= away_form
         
-        # Adjust for defensive strength
-        if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
-            home_win_base *= 0.7  # Reduce home win chance by 30%
-            draw_base *= 1.2
-            away_win_base *= 1.1
+        # Adjust for defensive strength (with sample awareness)
+        if away_defense_adj <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
+            # Less aggressive reduction for small samples
+            reduction = 0.7 if away.games_played >= 8 else 0.85
+            home_win_base *= reduction
+            draw_base *= 1.1
+            away_win_base *= 1.05
         
         # Adjust for clean sheet probability
         if away.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
-            home_win_base *= 0.8
-            draw_base += 0.1
+            home_win_base *= 0.85
+            draw_base += 0.08
+        
+        # Adjust for failed to score
+        if home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
+            home_win_base *= 0.9
         
         # Normalize probabilities
         total = home_win_base + draw_base + away_win_base
@@ -155,6 +202,12 @@ class PredictionEngine:
             'form_factors': {
                 'home': round(home_form, 2),
                 'away': round(away_form, 2)
+            },
+            'sample_adjustments': {
+                'home_attack': round(home_attack_adj, 2),
+                'home_defense': round(home_defense_adj, 2),
+                'away_attack': round(away_attack_adj, 2),
+                'away_defense': round(away_defense_adj, 2)
             }
         }
     
@@ -162,13 +215,27 @@ class PredictionEngine:
         """
         Predict Over/Under 2.5 goals
         """
+        # Adjust for sample size
+        home_attack_adj = self.adjust_for_sample_size(
+            home.attack_strength, home.games_played, self.context.league_avg_goals/2
+        )
+        home_defense_adj = self.adjust_for_sample_size(
+            home.defense_strength, home.games_played, self.context.league_avg_goals/2
+        )
+        away_attack_adj = self.adjust_for_sample_size(
+            away.attack_strength, away.games_played, self.context.league_avg_goals/2
+        )
+        away_defense_adj = self.adjust_for_sample_size(
+            away.defense_strength, away.games_played, self.context.league_avg_goals/2
+        )
+        
         # Calculate automated form factors
         home_form = self.calculate_form_factor(home)
         away_form = self.calculate_form_factor(away)
         
-        # Calculate expected goals
-        expected_home_goals = (home.attack_strength + away.defense_strength) / 2
-        expected_away_goals = (away.attack_strength + home.defense_strength) / 2
+        # Calculate expected goals with adjusted values
+        expected_home_goals = (home_attack_adj + away_defense_adj) / 2
+        expected_away_goals = (away_attack_adj + home_defense_adj) / 2
         
         # Apply venue and form adjustments
         expected_home_goals *= self.context.home_advantage * home_form
@@ -180,14 +247,15 @@ class PredictionEngine:
         prob_over = self._poisson_over_25(expected_total)
         prob_under = 1 - prob_over
         
-        # Defensive adjustment
-        if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
-            prob_over *= 0.6
+        # Defensive adjustment (less aggressive for small samples)
+        if away_defense_adj <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
+            reduction = 0.6 if away.games_played >= 8 else 0.8
+            prob_over *= reduction
             prob_under = 1 - prob_over
         
         # Offensive weakness adjustment
-        if home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
-            prob_over *= 0.8
+        if home_attack_adj <= self.THRESHOLDS['WEAK_ATTACK']:
+            prob_over *= 0.85
             prob_under = 1 - prob_over
         
         # Determine prediction
@@ -230,17 +298,18 @@ class PredictionEngine:
         
         # Adjust for failed to score
         if home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            prob_btts *= 0.7
+            prob_btts *= 0.8
         if away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            prob_btts *= 0.7
+            prob_btts *= 0.8
         
         # Defensive adjustment
         if away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE']:
-            prob_btts *= 0.6
+            prob_btts *= 0.7
         
-        # H2H adjustment if available
+        # H2H adjustment if available (STRONG weight for H2H)
         if h2h_btts is not None:
-            prob_btts = (prob_btts * 0.7) + (h2h_btts * 0.3)
+            # H2H gets 40% weight because it's direct evidence
+            prob_btts = (prob_btts * 0.6) + (h2h_btts * 0.4)
         
         prob_no_btts = 1 - prob_btts
         
@@ -272,13 +341,27 @@ class PredictionEngine:
         """
         Calculate detailed expected goals
         """
+        # Adjust for sample size
+        home_attack_adj = self.adjust_for_sample_size(
+            home.attack_strength, home.games_played, self.context.league_avg_goals/2
+        )
+        home_defense_adj = self.adjust_for_sample_size(
+            home.defense_strength, home.games_played, self.context.league_avg_goals/2
+        )
+        away_attack_adj = self.adjust_for_sample_size(
+            away.attack_strength, away.games_played, self.context.league_avg_goals/2
+        )
+        away_defense_adj = self.adjust_for_sample_size(
+            away.defense_strength, away.games_played, self.context.league_avg_goals/2
+        )
+        
         # Calculate automated form factors
         home_form = self.calculate_form_factor(home)
         away_form = self.calculate_form_factor(away)
         
-        # Base calculations
-        expected_home = (home.attack_strength + away.defense_strength) / 2
-        expected_away = (away.attack_strength + home.defense_strength) / 2
+        # Base calculations with adjusted values
+        expected_home = (home_attack_adj + away_defense_adj) / 2
+        expected_away = (away_attack_adj + home_defense_adj) / 2
         
         # Apply venue and form adjustments
         expected_home *= self.context.home_advantage * home_form
@@ -319,19 +402,24 @@ class PredictionEngine:
         elif away_form <= 0.9:
             patterns.append(f"Away team in poor form (recent scoring: {away.goals_scored_last_5} in last 5)")
         
+        # Clean sheet patterns
+        if home.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
+            patterns.append(f"Home team high clean sheet rate ({home.clean_sheet_pct:.0%})")
+        
+        if away.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
+            patterns.append(f"Away team high clean sheet rate ({away.clean_sheet_pct:.0%})")
+        
+        # Failed to score patterns
+        if home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
+            patterns.append(f"Home team struggles to score (fails in {home.failed_to_score_pct:.0%} of games)")
+        
+        if away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
+            patterns.append(f"Away team struggles to score (fails in {away.failed_to_score_pct:.0%} of games)")
+        
         # Defensive battle pattern
         if (away.defense_strength <= self.THRESHOLDS['VERY_STRONG_DEFENSE'] and 
             home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']):
             patterns.append("Defensive battle - Low scoring expected")
-        
-        # Clean sheet pattern
-        if away.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
-            patterns.append(f"Away team high clean sheet rate ({away.clean_sheet_pct:.0%})")
-        
-        # Offensive struggle pattern
-        if (home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE'] and
-            away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']):
-            patterns.append("Both teams struggle to score")
         
         # Parity pattern
         if abs(home.ppg - away.ppg) <= self.THRESHOLDS['CLOSE_PPG']:
