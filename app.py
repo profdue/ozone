@@ -1,11 +1,9 @@
 """
-Football Match Predictor - Single File App
-No separate engine.py needed
-Works on Streamlit Cloud
+Football Match Predictor - No pandas version
+Works on Streamlit Cloud with Python 3.13
 """
 
 import streamlit as st
-import pandas as pd
 
 # ========== PREDICTION ENGINE ==========
 def predict_match(home_stats, away_stats):
@@ -105,20 +103,18 @@ def main():
     
     st.divider()
     
-    # Stats summary
+    # Stats summary (without pandas)
     if st.button("📊 Show Stats Summary", type="secondary"):
-        stats_df = pd.DataFrame({
-            'Statistic': ['PPG', 'Goals Scored', 'Goals Conceded', 'Clean Sheet %'],
-            home_name: [home_ppg, home_scored, home_conceded, f"{home_cs}%"],
-            away_name: [away_ppg, away_scored, away_conceded, f"{away_cs}%"],
-            'Difference': [
-                f"{home_ppg - away_ppg:+.2f}",
-                f"{home_scored - away_scored:+.2f}",
-                f"{home_conceded - away_conceded:+.2f}",
-                f"{home_cs - away_cs:+d}%"
-            ]
-        })
-        st.dataframe(stats_df, use_container_width=True)
+        st.markdown(f"""
+        ### 📈 Stats Comparison
+        
+        | Statistic | {home_name} | {away_name} | Difference |
+        |-----------|-------------|-------------|------------|
+        | **PPG** | {home_ppg} | {away_ppg} | **{home_ppg - away_ppg:+.2f}** |
+        | **Goals Scored** | {home_scored} | {away_scored} | **{home_scored - away_scored:+.2f}** |
+        | **Goals Conceded** | {home_conceded} | {away_conceded} | **{home_conceded - away_conceded:+.2f}** |
+        | **Clean Sheet %** | {home_cs}% | {away_cs}% | **{home_cs - away_cs:+d}%** |
+        """)
     
     # Prediction button
     if st.button("🎯 Generate Prediction", type="primary", use_container_width=True):
@@ -144,27 +140,28 @@ def main():
         st.success("✅ Prediction Generated!")
         
         # Results in columns
-        r1, r2, r3, r4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(4)
         
-        with r1:
+        with col1:
             st.metric("Match Result", pred['result'], f"{pred['confidence']}% conf")
         
-        with r2:
+        with col2:
             st.metric("Total Goals", pred['over_under'], f"Exp: {pred['total_goals']}")
         
-        with r3:
+        with col3:
             st.metric("Both Teams Score", pred['btts'])
         
-        with r4:
+        with col4:
             st.metric("Expected Score", f"{pred['home_goals']}-{pred['away_goals']}")
         
         # Analysis
         st.divider()
         st.subheader("📈 Analysis")
         
-        analysis_col1, analysis_col2 = st.columns(2)
+        # Create a simple visual comparison
+        col_a, col_b = st.columns(2)
         
-        with analysis_col1:
+        with col_a:
             st.markdown(f"""
             **Key Factors:**
             
@@ -175,84 +172,152 @@ def main():
             • **Clean Sheets:** {away_name} keeps clean sheets in **{away_cs}%** of away games
             
             • **Goal Expectancy:** {pred['home_goals']} - {pred['away_goals']}
+            
+            **Prediction Logic:**
+            - Home Strength: {home_stats['ppg']} + ({home_stats['goals_scored']} × 0.3) = {home_stats['ppg'] + home_stats['goals_scored'] * 0.3:.2f}
+            - Away Strength: {away_stats['ppg']} + ({away_stats['goals_scored']} × 0.3) = {away_stats['ppg'] + away_stats['goals_scored'] * 0.3:.2f}
+            - Strength Difference: {home_stats['ppg'] + home_stats['goals_scored'] * 0.3 - (away_stats['ppg'] + away_stats['goals_scored'] * 0.3):.2f}
             """)
         
-        with analysis_col2:
+        with col_b:
             # Betting recommendation
             if pred['confidence'] > 70:
                 rec = "✅ Strong Bet"
                 color = "green"
+                emoji = "💰"
             elif pred['confidence'] > 55:
                 rec = "⚠️ Moderate Bet"
                 color = "orange"
+                emoji = "💡"
             else:
                 rec = "❌ Avoid/Low Stake"
                 color = "red"
+                emoji = "⚡"
             
             st.markdown(f"""
-            **Betting Advice:**
+            **{emoji} Betting Advice**
             
             **{rec}**
             
-            Consider betting on:
-            • **{pred['result']}**
-            • **{pred['over_under']} goals**
+            **Recommended Bets:**
+            1. **Match Result:** {pred['result']}
+            2. **Total Goals:** {pred['over_under']}
+            3. **BTTS:** {pred['btts']}
             
-            Confidence: **{pred['confidence']}%**
+            **Confidence Level:** {pred['confidence']}%
+            
+            **Expected Value Bets:**
+            - Home Win odds should be > 2.0
+            - Under 2.5 odds should be > 1.8
+            - BTTS No odds should be > 1.7
             """)
         
-        # Create a simple chart
-        chart_data = pd.DataFrame({
-            'Team': [home_name, away_name],
-            'Attack': [home_scored, away_scored],
-            'Defense': [3 - home_conceded, 3 - away_conceded]  # Invert so higher = better
-        })
+        # Simple bar chart using Streamlit's native chart
+        st.divider()
+        st.subheader("📊 Team Comparison")
         
-        st.bar_chart(chart_data.set_index('Team'))
+        # Create comparison data
+        comparison_data = {
+            'Attack Strength': [home_scored, away_scored],
+            'Defense Strength': [3 - home_conceded, 3 - away_conceded],
+            'Clean Sheet %': [home_cs / 100, away_cs / 100]
+        }
+        
+        # Show comparison
+        col_x, col_y, col_z = st.columns(3)
+        
+        with col_x:
+            st.progress(home_scored / 4, text=f"{home_name}: {home_scored} goals")
+            st.progress(away_scored / 4, text=f"{away_name}: {away_scored} goals")
+            st.caption("Attack (Goals/Game)")
+        
+        with col_y:
+            st.progress((3 - home_conceded) / 3, text=f"{home_name}: {home_conceded} conceded")
+            st.progress((3 - away_conceded) / 3, text=f"{away_name}: {away_conceded} conceded")
+            st.caption("Defense (Lower = Better)")
+        
+        with col_z:
+            st.progress(home_cs / 100, text=f"{home_name}: {home_cs}%")
+            st.progress(away_cs / 100, text=f"{away_name}: {away_cs}%")
+            st.caption("Clean Sheet %")
     
     # Sidebar with examples
     with st.sidebar:
         st.header("📚 Quick Examples")
         
+        example = st.selectbox(
+            "Load Example:",
+            ["Select example", "Defensive Battle", "High Scoring Match", "Even Matchup", "Your Example Match"]
+        )
+        
+        if example == "Defensive Battle":
+            st.session_state['home_ppg'] = 1.8
+            st.session_state['h_gs'] = 1.4
+            st.session_state['h_gc'] = 0.9
+            st.session_state['h_cs'] = 35
+            
+            st.session_state['away_ppg'] = 1.6
+            st.session_state['a_gs'] = 1.1
+            st.session_state['a_gc'] = 0.8
+            st.session_state['a_cs'] = 45
+            
+            st.rerun()
+        
+        elif example == "High Scoring Match":
+            st.session_state['home_ppg'] = 2.1
+            st.session_state['h_gs'] = 2.3
+            st.session_state['h_gc'] = 1.6
+            st.session_state['h_cs'] = 15
+            
+            st.session_state['away_ppg'] = 1.7
+            st.session_state['a_gs'] = 1.9
+            st.session_state['a_gc'] = 1.8
+            st.session_state['a_cs'] = 10
+            
+            st.rerun()
+        
+        elif example == "Even Matchup":
+            st.session_state['home_ppg'] = 1.5
+            st.session_state['h_gs'] = 1.3
+            st.session_state['h_gc'] = 1.2
+            st.session_state['h_cs'] = 25
+            
+            st.session_state['away_ppg'] = 1.4
+            st.session_state['a_gs'] = 1.2
+            st.session_state['a_gc'] = 1.3
+            st.session_state['a_cs'] = 20
+            
+            st.rerun()
+        
+        st.divider()
+        
         st.markdown("""
-        **Copy these examples:**
+        **How to Use:**
+        1. Enter team names
+        2. Set stats for each team
+        3. Click "Generate Prediction"
+        4. Get betting advice
         
-        **Defensive Battle:**
-        ```
-        Home: PPG 1.8, Scored 1.4, Conceded 0.9, CS 35%
-        Away: PPG 1.6, Scored 1.1, Conceded 0.8, CS 45%
-        ```
-        
-        **High Scoring:**
-        ```
-        Home: PPG 2.1, Scored 2.3, Conceded 1.6, CS 15%
-        Away: PPG 1.7, Scored 1.9, Conceded 1.8, CS 10%
-        ```
-        
-        **Even Match:**
-        ```
-        Home: PPG 1.5, Scored 1.3, Conceded 1.2, CS 25%
-        Away: PPG 1.4, Scored 1.2, Conceded 1.3, CS 20%
-        ```
+        **Stats Guide:**
+        - **PPG:** Points per game (3=win, 1=draw, 0=loss)
+        - **Clean Sheet %:** Games without conceding
+        - Use **HOME** stats for home team
+        - Use **AWAY** stats for away team
         """)
         
         st.divider()
         
         st.markdown("""
-        **Where to find stats:**
-        
-        1. **FootyStats.org** (free)
-        2. **SofaScore.com**
-        3. **WhoScored.com**
-        4. **League websites**
-        
-        Use **HOME** stats for home team  
-        Use **AWAY** stats for away team
+        **Data Sources:**
+        - FootyStats.org (free)
+        - SofaScore.com
+        - WhoScored.com
+        - League websites
         """)
     
     # Footer
     st.divider()
-    st.caption("Ozone Predictor • No API required • Works for any football league")
+    st.caption("⚽ Ozone Predictor • No dependencies • Works on any device")
 
 # Run the app
 if __name__ == "__main__":
