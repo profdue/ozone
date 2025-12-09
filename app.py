@@ -1,6 +1,6 @@
 """
-Football Predictor Pro v2.0 - FIXED VERSION
-Fixed defensive analysis and improved pattern detection
+Football Predictor Pro v2.0 - FINAL FIXED VERSION
+Completely fixed defensive analysis and pattern detection
 """
 
 import streamlit as st
@@ -69,7 +69,7 @@ class MatchContext:
 
 class PredictionEngineV2:
     """
-    Prediction Engine v2.0 with xG Integration - FIXED VERSION
+    Prediction Engine v2.0 with xG Integration - FINALLY FIXED VERSION
     """
     
     def __init__(self, context: Optional[MatchContext] = None):
@@ -226,15 +226,15 @@ class PredictionEngineV2:
     
     def analyze_defensive_strength(self, team: TeamMetrics) -> Dict:
         """
-        Key defensive analysis that drives many adjustments - FIXED VERSION
+        Key defensive analysis that drives many adjustments - FINALLY CORRECTED
         """
         analysis = {
             'is_very_strong': False,
             'is_strong': False,
             'is_weak': False,
             'clean_sheet_likely': False,
-            'xg_better_than_actual': False,  # xGA < Actual = better defense
-            'xg_worse_than_actual': False    # xGA > Actual = worse defense
+            'xg_better_than_actual': False,  # Defense is BETTER than stats show (concedes less than expected)
+            'xg_worse_than_actual': False    # Defense is WORSE than stats show (concedes more than expected)
         }
         
         # Actual goals analysis
@@ -245,13 +245,13 @@ class PredictionEngineV2:
         elif team.defense_strength >= self.THRESHOLDS['WEAK_DEFENSE']:
             analysis['is_weak'] = True
         
-        # FIXED: xG enhancement: Is defense actually better/worse than stats show?
-        # If xGA < Actual: Conceding less than expected = BETTER defense
-        # If xGA > Actual: Conceding more than expected = WORSE defense
-        if team.xg_against < team.defense_strength * self.THRESHOLDS['XG_LUCKY_DEFENSE']:
-            analysis['xg_better_than_actual'] = True  # BETTER defense than stats show
-        elif team.xg_against > team.defense_strength * (1/self.THRESHOLDS['XG_LUCKY_DEFENSE']):
-            analysis['xg_worse_than_actual'] = True   # WORSE defense than stats show
+        # FINAL FIX: xG enhancement - Compare xGA to actual goals conceded
+        # If xGA > Actual: Team concedes LESS than expected = Defense is BETTER than stats show
+        # If xGA < Actual: Team concedes MORE than expected = Defense is WORSE than stats show
+        if team.xg_against > team.defense_strength * 1.15:
+            analysis['xg_better_than_actual'] = True  # Conceding LESS than expected = BETTER defense
+        elif team.xg_against < team.defense_strength * 0.85:
+            analysis['xg_worse_than_actual'] = True   # Conceding MORE than expected = WORSE defense
         
         # Clean sheet analysis
         if team.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
@@ -303,8 +303,8 @@ class PredictionEngineV2:
         if home.xg_for > home.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
             home_win_base *= 1.1
         
-        # If away team lucky in defense (due to concede more)
-        if away_defense_analysis['xg_worse_than_actual']:  # xGA > Actual
+        # If away team defense is worse than stats show (due to concede more)
+        if away_defense_analysis['xg_worse_than_actual']:
             away_win_base *= 0.9  # Defensive luck may run out
         
         # 7. Normalize probabilities
@@ -383,12 +383,12 @@ class PredictionEngineV2:
                     f"{home.name} creates {home.xg_for:.2f} xG but scores {home.attack_strength:.2f} - due for goals"
                 )
         
-        # Away team allows chances but gets lucky
-        if away_defense['xg_worse_than_actual']:  # xGA > Actual
+        # Away team defense is worse than stats show
+        if away_defense['xg_worse_than_actual']:
             prob_over *= 1.1
             if away.name:
                 xg_adjustments.append(
-                    f"{away.name} allows {away.xg_against:.2f} xG but concedes {away.defense_strength:.2f} - defensive luck may end"
+                    f"{away.name} defense worse than stats show - could concede more"
                 )
         
         # Re-normalize
@@ -402,17 +402,8 @@ class PredictionEngineV2:
             prediction = Prediction.OVER_25
             confidence = self._probability_to_confidence(prob_over)
         else:
-            # More nuanced decision for close calls
-            if abs(prob_over - 0.5) < 0.1:
-                # Very close to 50/50
-                if total_expected > self.context.league_avg_goals:
-                    prediction = Prediction.OVER_25
-                else:
-                    prediction = Prediction.UNDER_25
-                confidence = "Very Low"
-            else:
-                prediction = Prediction.UNDER_25 if prob_under > prob_over else Prediction.OVER_25
-                confidence = "Low"
+            prediction = Prediction.UNDER_25 if prob_under > prob_over else Prediction.OVER_25
+            confidence = "Low"
         
         return {
             'prediction': prediction,
@@ -470,8 +461,8 @@ class PredictionEngineV2:
             prob_btts *= 0.9  # Creates chances but doesn't finish
         
         # Away team defensive luck
-        if away_defense['xg_worse_than_actual']:  # xGA > Actual
-            prob_btts *= 1.1  # Allows chances, luck may run out
+        if away_defense['xg_worse_than_actual']:
+            prob_btts *= 1.1  # Defense worse than stats show - more likely to concede
         
         # H2H adjustment (MODERATE weight: 15-25%)
         if h2h_btts is not None:
@@ -496,7 +487,7 @@ class PredictionEngineV2:
                 prediction = Prediction.BTTS_YES
             else:
                 prediction = Prediction.BTTS_NO
-            confidence = "Very Low"
+            confidence = "Toss-up"
         
         return {
             'prediction': prediction,
@@ -513,7 +504,7 @@ class PredictionEngineV2:
     
     def analyze_matchup_patterns(self, home: TeamMetrics, away: TeamMetrics) -> List[str]:
         """
-        Generate key insights about the matchup - IMPROVED VERSION
+        Generate key insights about the matchup - IMPROVED with no duplicates
         """
         patterns = []
         
@@ -526,14 +517,14 @@ class PredictionEngineV2:
         away_form = self.calculate_form_factor(away)
         
         if home_form >= self.THRESHOLDS['GOOD_FORM']:
-            patterns.append(f"{home_name} in GOOD form (scoring {home.goals_scored_last_5} in last 5 vs {home.attack_strength:.2f} season avg)")
+            patterns.append(f"{home_name} in GOOD form ({home.goals_scored_last_5} goals in last 5)")
         elif home_form <= self.THRESHOLDS['POOR_FORM']:
-            patterns.append(f"{home_name} in POOR form (scoring {home.goals_scored_last_5} in last 5 vs {home.attack_strength:.2f} season avg)")
+            patterns.append(f"{home_name} in POOR form ({home.goals_scored_last_5} goals in last 5)")
         
         if away_form >= self.THRESHOLDS['GOOD_FORM']:
-            patterns.append(f"{away_name} in GOOD form (scoring {away.goals_scored_last_5} in last 5 vs {away.attack_strength:.2f} season avg)")
+            patterns.append(f"{away_name} in GOOD form ({away.goals_scored_last_5} goals in last 5)")
         elif away_form <= self.THRESHOLDS['POOR_FORM']:
-            patterns.append(f"{away_name} in POOR form (scoring {away.goals_scored_last_5} in last 5 vs {away.attack_strength:.2f} season avg)")
+            patterns.append(f"{away_name} in POOR form ({away.goals_scored_last_5} goals in last 5)")
         
         # Defensive analysis
         home_defense = self.analyze_defensive_strength(home)
@@ -555,7 +546,7 @@ class PredictionEngineV2:
         
         # Defensive battle detection
         if (away_defense['is_very_strong'] or away_defense['is_strong']) and home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
-            patterns.append("DEFENSIVE BATTLE expected - low scoring likely")
+            patterns.append("DEFENSIVE BATTLE likely - low scoring expected")
         
         # High scoring potential
         if home.attack_strength >= self.THRESHOLDS['STRONG_ATTACK'] and away_defense['is_weak']:
@@ -570,28 +561,31 @@ class PredictionEngineV2:
         
         # Failed to score patterns
         if home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            patterns.append(f"{home_name} struggles to score (fails in {home.failed_to_score_pct:.0%} of games)")
+            patterns.append(f"{home_name} struggles to score ({home.failed_to_score_pct:.0%} failed to score)")
         
         if away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            patterns.append(f"{away_name} struggles to score (fails in {away.failed_to_score_pct:.0%} of games)")
+            patterns.append(f"{away_name} struggles to score ({away.failed_to_score_pct:.0%} failed to score)")
         
-        # xG patterns (NEW)
-        if home.xg_for > home.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
-            patterns.append(f"{home_name} creates chances ({home.xg_for:.2f} xG) but doesn't finish ({home.attack_strength:.2f} goals) - DUE FOR GOALS")
+        # xG patterns - only add unique ones
+        home_xg_diff = home.xg_for - home.attack_strength
+        away_xg_diff = away.xg_for - away.attack_strength
         
-        if away.xg_for > away.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
-            patterns.append(f"{away_name} creates chances ({away.xg_for:.2f} xG) but doesn't finish ({away.attack_strength:.2f} goals) - DUE FOR GOALS")
+        if home_xg_diff > 0.2:
+            patterns.append(f"{home_name} creates chances - due for goals (+{home_xg_diff:.2f} xG)")
+        
+        if away_xg_diff > 0.2:
+            patterns.append(f"{away_name} creates chances - due for goals (+{away_xg_diff:.2f} xG)")
         
         # Defensive xG patterns
         if home_defense['xg_better_than_actual']:
-            patterns.append(f"{home_name} defense BETTER than stats show (xGA: {home.xg_against:.2f} vs Actual: {home.defense_strength:.2f})")
+            patterns.append(f"{home_name} defense BETTER than stats show")
         elif home_defense['xg_worse_than_actual']:
-            patterns.append(f"{home_name} defense WORSE than stats show (xGA: {home.xg_against:.2f} vs Actual: {home.defense_strength:.2f})")
+            patterns.append(f"{home_name} defense WORSE than stats show")
         
         if away_defense['xg_better_than_actual']:
-            patterns.append(f"{away_name} defense BETTER than stats show (xGA: {away.xg_against:.2f} vs Actual: {away.defense_strength:.2f})")
+            patterns.append(f"{away_name} defense BETTER than stats show")
         elif away_defense['xg_worse_than_actual']:
-            patterns.append(f"{away_name} defense WORSE than stats show (xGA: {away.xg_against:.2f} vs Actual: {away.defense_strength:.2f})")
+            patterns.append(f"{away_name} defense WORSE than stats show")
         
         # Parity pattern
         if abs(home.ppg - away.ppg) <= 0.2:
@@ -599,7 +593,7 @@ class PredictionEngineV2:
         
         # Home dominance
         if home.ppg > away.ppg + 0.5:
-            patterns.append(f"{home_name} significantly stronger on paper (+{home.ppg - away.ppg:.2f} PPG difference)")
+            patterns.append(f"{home_name} significantly stronger (+{home.ppg - away.ppg:.2f} PPG)")
         
         return patterns
     
@@ -778,7 +772,7 @@ def main():
             key="away_name_input"
         )
     
-    # Main tabs for organized input - MAKE SURE ALL ARE EXPANDED BY DEFAULT
+    # Main tabs for organized input
     tab1, tab2, tab3 = st.tabs(["⚽ Core Stats", "📈 xG Stats", "📊 Recent Form"])
     
     with tab1:
@@ -842,14 +836,6 @@ def main():
                     value=int(st.session_state.get('home_fts', 33)),
                     key="home_fts_input"
                 )
-            
-            # Quick stats summary
-            with st.expander("📊 Quick Stats Summary", expanded=True):
-                st.write(f"**Attack:** {home_attack:.2f} goals/game")
-                st.write(f"**Defense:** {home_defense:.2f} conceded/game")
-                st.write(f"**Points:** {home_ppg:.2f} PPG")
-                st.write(f"**Clean Sheets:** {home_cs}%")
-                st.write(f"**Fail to Score:** {home_fts}%")
         
         with col2:
             st.subheader(f"{away_name}")
@@ -908,14 +894,6 @@ def main():
                     value=int(st.session_state.get('away_fts', 30)),
                     key="away_fts_input"
                 )
-            
-            # Quick stats summary
-            with st.expander("📊 Quick Stats Summary", expanded=True):
-                st.write(f"**Attack:** {away_attack:.2f} goals/game")
-                st.write(f"**Defense:** {away_defense:.2f} conceded/game")
-                st.write(f"**Points:** {away_ppg:.2f} PPG")
-                st.write(f"**Clean Sheets:** {away_cs}%")
-                st.write(f"**Fail to Score:** {away_fts}%")
     
     with tab2:
         st.info("xG (Expected Goals) measures the quality of chances created/conceded")
@@ -942,18 +920,6 @@ def main():
                     step=0.01,
                     key="home_xg_against_input"
                 )
-            
-            # xG insights
-            if home_xg_for > 0 and home_attack > 0:
-                xg_diff = home_xg_for - home_attack
-                if xg_diff > 0.2:
-                    st.warning(f"⚠️ Creates MORE chances than scores (+{xg_diff:.2f} xG difference)")
-                    st.caption("Team may be unlucky in finishing - due for goals")
-                elif xg_diff < -0.2:
-                    st.success(f"✅ Scores MORE than creates ({abs(xg_diff):.2f} xG difference)")
-                    st.caption("Team may be overperforming xG - regression possible")
-                else:
-                    st.info(f"📊 Scoring matches chance creation ({xg_diff:+.2f} xG difference)")
         
         with col2:
             st.subheader(f"{away_name} xG")
@@ -975,18 +941,6 @@ def main():
                     step=0.01,
                     key="away_xg_against_input"
                 )
-            
-            # xG insights
-            if away_xg_against > 0 and away_defense > 0:
-                xga_diff = away_xg_against - away_defense
-                if xga_diff > 0.2:
-                    st.success(f"✅ Concedes LESS than expected ({abs(xga_diff):.2f} xG difference)")
-                    st.caption("Defense may be lucky - could concede more")
-                elif xga_diff < -0.2:
-                    st.warning(f"⚠️ Concedes MORE than expected (+{abs(xga_diff):.2f} xG difference)")
-                    st.caption("Defense may be unlucky - could improve")
-                else:
-                    st.info(f"📊 Conceding matches expected ({xga_diff:+.2f} xG difference)")
     
     with tab3:
         st.info("Enter goals from the last 5 matches for each team")
@@ -1010,24 +964,6 @@ def main():
                     value=int(st.session_state.get('home_conceded5', 4)),
                     key="home_conceded5_input"
                 )
-            
-            # Form insights
-            home_avg_5 = home_goals5 / 5
-            if home_avg_5 > home_attack * 1.2:
-                st.success(f"📈 GOOD recent form: {home_avg_5:.2f} goals/game (↑ from {home_attack:.2f} season avg)")
-                st.caption("Team in good scoring form")
-            elif home_avg_5 < home_attack * 0.8:
-                st.error(f"📉 POOR recent form: {home_avg_5:.2f} goals/game (↓ from {home_attack:.2f} season avg)")
-                st.caption("Team struggling to score recently")
-            else:
-                st.info(f"📊 CONSISTENT form: {home_avg_5:.2f} goals/game (similar to {home_attack:.2f} season avg)")
-            
-            # Defensive form
-            home_def_avg_5 = home_conceded5 / 5
-            if home_def_avg_5 > home_defense * 1.2:
-                st.warning(f"⚠️ WORSENING defense: {home_def_avg_5:.2f} conceded/game (↑ from {home_defense:.2f} season avg)")
-            elif home_def_avg_5 < home_defense * 0.8:
-                st.success(f"✅ IMPROVING defense: {home_def_avg_5:.2f} conceded/game (↓ from {home_defense:.2f} season avg)")
         
         with col2:
             st.subheader(f"{away_name} Recent Form")
@@ -1047,24 +983,6 @@ def main():
                     value=int(st.session_state.get('away_conceded5', 10)),
                     key="away_conceded5_input"
                 )
-            
-            # Form insights
-            away_avg_5 = away_goals5 / 5
-            if away_avg_5 > away_attack * 1.2:
-                st.success(f"📈 GOOD recent form: {away_avg_5:.2f} goals/game (↑ from {away_attack:.2f} season avg)")
-                st.caption("Team in good scoring form")
-            elif away_avg_5 < away_attack * 0.8:
-                st.error(f"📉 POOR recent form: {away_avg_5:.2f} goals/game (↓ from {away_attack:.2f} season avg)")
-                st.caption("Team struggling to score recently")
-            else:
-                st.info(f"📊 CONSISTENT form: {away_avg_5:.2f} goals/game (similar to {away_attack:.2f} season avg)")
-            
-            # Defensive form
-            away_def_avg_5 = away_conceded5 / 5
-            if away_def_avg_5 > away_defense * 1.2:
-                st.warning(f"⚠️ WORSENING defense: {away_def_avg_5:.2f} conceded/game (↑ from {away_defense:.2f} season avg)")
-            elif away_def_avg_5 < away_defense * 0.8:
-                st.success(f"✅ IMPROVING defense: {away_def_avg_5:.2f} conceded/game (↓ from {away_defense:.2f} season avg)")
     
     # H2H Section
     with st.expander("Head-to-Head Data (Optional)", expanded=True):
@@ -1086,15 +1004,6 @@ def main():
                 key="h2h_meetings_input",
                 help="Total number of previous meetings between these teams"
             )
-        
-        # H2H insights
-        if h2h_btts > 0:
-            if h2h_btts >= 70:
-                st.success(f"✅ Strong H2H BTTS trend: {h2h_btts}% of meetings")
-            elif h2h_btts <= 30:
-                st.info(f"📊 Weak H2H BTTS trend: {h2h_btts}% of meetings")
-            else:
-                st.info(f"📊 Moderate H2H BTTS trend: {h2h_btts}% of meetings")
     
     # Create team metrics objects
     home_metrics = TeamMetrics(
@@ -1172,8 +1081,22 @@ def main():
                 
                 # Form factors
                 with st.expander("Form Factors"):
-                    st.write(f"**{home_name}:** {result_pred['form_factors']['home']:.2f}x")
-                    st.write(f"**{away_name}:** {result_pred['form_factors']['away']:.2f}x")
+                    home_form = result_pred['form_factors']['home']
+                    away_form = result_pred['form_factors']['away']
+                    
+                    if home_form > 1.0:
+                        st.success(f"**{home_name}:** {home_form:.2f}x (Good form)")
+                    elif home_form < 1.0:
+                        st.error(f"**{home_name}:** {home_form:.2f}x (Poor form)")
+                    else:
+                        st.info(f"**{home_name}:** {home_form:.2f}x (Average form)")
+                    
+                    if away_form > 1.0:
+                        st.success(f"**{away_name}:** {away_form:.2f}x (Good form)")
+                    elif away_form < 1.0:
+                        st.error(f"**{away_name}:** {away_form:.2f}x (Poor form)")
+                    else:
+                        st.info(f"**{away_name}:** {away_form:.2f}x (Average form)")
             
             with col2:
                 st.subheader("⚖️ Over/Under 2.5")
@@ -1192,11 +1115,6 @@ def main():
                     st.metric("Over", f"{over_prob:.1%}")
                 with col_ou[1]:
                     st.metric("Under", f"{under_prob:.1%}")
-                
-                # Expected goals breakdown
-                with st.expander("Expected Goals Breakdown"):
-                    st.write(f"**{home_name}:** {over_under_pred['detailed_expected']['home']:.2f}")
-                    st.write(f"**{away_name}:** {over_under_pred['detailed_expected']['away']:.2f}")
             
             with col3:
                 st.subheader("🎯 Both Teams to Score")
@@ -1248,110 +1166,42 @@ def main():
             if patterns:
                 st.header("🧠 Key Insights & Patterns")
                 
-                # Categorize patterns
-                form_patterns = [p for p in patterns if "form" in p.lower()]
-                defense_patterns = [p for p in patterns if "defense" in p.lower() or "concede" in p.lower()]
-                attack_patterns = [p for p in patterns if "attack" in p.lower() or "score" in p.lower() or "goal" in p.lower()]
-                xg_patterns = [p for p in patterns if "xg" in p.lower() or "due" in p.lower()]
-                other_patterns = [p for p in patterns if p not in form_patterns + defense_patterns + attack_patterns + xg_patterns]
+                # Remove duplicates while preserving order
+                unique_patterns = []
+                seen_patterns = set()
+                for pattern in patterns:
+                    # Create a simplified key for deduplication
+                    key = pattern.lower().replace("xg", "").replace("due for", "").strip()
+                    if key not in seen_patterns:
+                        seen_patterns.add(key)
+                        unique_patterns.append(pattern)
                 
-                # Display in columns
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if form_patterns:
-                        st.subheader("📈 Form Patterns")
-                        for pattern in form_patterns:
-                            if "GOOD" in pattern:
-                                st.success(f"• {pattern}")
-                            elif "POOR" in pattern:
-                                st.error(f"• {pattern}")
-                            else:
-                                st.info(f"• {pattern}")
+                # Display unique patterns in columns
+                if unique_patterns:
+                    col1, col2 = st.columns(2)
+                    mid_point = len(unique_patterns) // 2
                     
-                    if attack_patterns:
-                        st.subheader("⚽ Attack Patterns")
-                        for pattern in attack_patterns:
-                            if "STRONG" in pattern:
+                    with col1:
+                        for pattern in unique_patterns[:mid_point]:
+                            if "GOOD" in pattern or "STRONG" in pattern or "BETTER" in pattern:
                                 st.success(f"• {pattern}")
-                            elif "WEAK" in pattern or "struggle" in pattern:
+                            elif "POOR" in pattern or "WEAK" in pattern or "WORSE" in pattern or "struggle" in pattern:
                                 st.error(f"• {pattern}")
-                            else:
-                                st.info(f"• {pattern}")
-                
-                with col2:
-                    if defense_patterns:
-                        st.subheader("🛡️ Defense Patterns")
-                        for pattern in defense_patterns:
-                            if "STRONG" in pattern or "BETTER" in pattern:
-                                st.success(f"• {pattern}")
-                            elif "WEAK" in pattern or "WORSE" in pattern:
-                                st.error(f"• {pattern}")
-                            else:
-                                st.info(f"• {pattern}")
-                    
-                    if xg_patterns:
-                        st.subheader("📊 xG Patterns")
-                        for pattern in xg_patterns:
-                            if "DUE" in pattern:
+                            elif "due for" in pattern.lower():
                                 st.warning(f"• {pattern}")
-                            elif "BETTER" in pattern:
-                                st.success(f"• {pattern}")
-                            elif "WORSE" in pattern:
-                                st.error(f"• {pattern}")
                             else:
                                 st.info(f"• {pattern}")
                     
-                    if other_patterns:
-                        st.subheader("📋 Other Patterns")
-                        for pattern in other_patterns:
-                            if "CLOSE" in pattern or "draw" in pattern:
-                                st.info(f"• {pattern}")
-                            elif "DOMINANCE" in pattern or "stronger" in pattern:
+                    with col2:
+                        for pattern in unique_patterns[mid_point:]:
+                            if "GOOD" in pattern or "STRONG" in pattern or "BETTER" in pattern:
                                 st.success(f"• {pattern}")
+                            elif "POOR" in pattern or "WEAK" in pattern or "WORSE" in pattern or "struggle" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "due for" in pattern.lower():
+                                st.warning(f"• {pattern}")
                             else:
                                 st.info(f"• {pattern}")
-            
-            # Team comparison table
-            st.header("📈 Detailed Team Comparison")
-            
-            comparison_data = {
-                'Metric': [
-                    'Goals/Game', 'xG Created/Game', 'xG Difference',
-                    'Conceded/Game', 'xG Conceded/Game', 'xGA Difference',
-                    'Clean Sheet %', 'Fail to Score %', 
-                    'Points/Game', 'Recent Form', 'Games Played'
-                ],
-                home_name: [
-                    f"{home_attack:.2f}",
-                    f"{home_xg_for:.2f}",
-                    f"{home_xg_for - home_attack:+.2f}",
-                    f"{home_defense:.2f}",
-                    f"{home_xg_against:.2f}",
-                    f"{home_xg_against - home_defense:+.2f}",
-                    f"{home_cs}%",
-                    f"{home_fts}%",
-                    f"{home_ppg:.2f}",
-                    f"{home_goals5/5:.2f} goals/game",
-                    f"{home_games}"
-                ],
-                away_name: [
-                    f"{away_attack:.2f}",
-                    f"{away_xg_for:.2f}",
-                    f"{away_xg_for - away_attack:+.2f}",
-                    f"{away_defense:.2f}",
-                    f"{away_xg_against:.2f}",
-                    f"{away_xg_against - away_defense:+.2f}",
-                    f"{away_cs}%",
-                    f"{away_fts}%",
-                    f"{away_ppg:.2f}",
-                    f"{away_goals5/5:.2f} goals/game",
-                    f"{away_games}"
-                ]
-            }
-            
-            df_comparison = pd.DataFrame(comparison_data)
-            st.dataframe(df_comparison, use_container_width=True, hide_index=True)
             
             # Defensive analysis
             st.header("🛡️ Defensive Analysis")
@@ -1367,27 +1217,24 @@ def main():
                 # Strength indicator
                 if home_def_analysis['is_very_strong']:
                     strength = "🎯 **VERY STRONG**"
-                    color = "green"
                 elif home_def_analysis['is_strong']:
                     strength = "✅ **Strong**"
-                    color = "lightgreen"
                 elif home_def_analysis['is_weak']:
                     strength = "⚠️ **Weak**"
-                    color = "orange"
                 else:
                     strength = "📊 **Average**"
-                    color = "blue"
                 
                 st.markdown(f"**Strength:** {strength}")
                 st.write(f"**Goals Conceded/Game:** {home_defense:.2f}")
                 st.write(f"**xG Conceded/Game:** {home_xg_against:.2f}")
                 
+                # FIXED LOGIC: Now correct
                 if home_def_analysis['xg_better_than_actual']:
-                    st.success(f"✅ Defense BETTER than stats show (xGA: {home_xg_against:.2f} vs Actual: {home_defense:.2f})")
-                    st.caption("Team may be lucky defensively - could concede more")
+                    st.success(f"✅ Defense BETTER than stats show")
+                    st.caption(f"(Concedes {home_defense:.2f} but xGA suggests {home_xg_against:.2f} - conceding LESS than expected)")
                 elif home_def_analysis['xg_worse_than_actual']:
-                    st.error(f"⚠️ Defense WORSE than stats show (xGA: {home_xg_against:.2f} vs Actual: {home_defense:.2f})")
-                    st.caption("Team may be unlucky defensively - could improve")
+                    st.error(f"⚠️ Defense WORSE than stats show")
+                    st.caption(f"(Concedes {home_defense:.2f} but xGA suggests {home_xg_against:.2f} - conceding MORE than expected)")
                 else:
                     st.info(f"📊 Defense matches expected performance")
                 
@@ -1400,27 +1247,24 @@ def main():
                 # Strength indicator
                 if away_def_analysis['is_very_strong']:
                     strength = "🎯 **VERY STRONG**"
-                    color = "green"
                 elif away_def_analysis['is_strong']:
                     strength = "✅ **Strong**"
-                    color = "lightgreen"
                 elif away_def_analysis['is_weak']:
                     strength = "⚠️ **Weak**"
-                    color = "orange"
                 else:
                     strength = "📊 **Average**"
-                    color = "blue"
                 
                 st.markdown(f"**Strength:** {strength}")
                 st.write(f"**Goals Conceded/Game:** {away_defense:.2f}")
                 st.write(f"**xG Conceded/Game:** {away_xg_against:.2f}")
                 
+                # FIXED LOGIC: Now correct
                 if away_def_analysis['xg_better_than_actual']:
-                    st.success(f"✅ Defense BETTER than stats show (xGA: {away_xg_against:.2f} vs Actual: {away_defense:.2f})")
-                    st.caption("Team may be lucky defensively - could concede more")
+                    st.success(f"✅ Defense BETTER than stats show")
+                    st.caption(f"(Concedes {away_defense:.2f} but xGA suggests {away_xg_against:.2f} - conceding LESS than expected)")
                 elif away_def_analysis['xg_worse_than_actual']:
-                    st.error(f"⚠️ Defense WORSE than stats show (xGA: {away_xg_against:.2f} vs Actual: {away_defense:.2f})")
-                    st.caption("Team may be unlucky defensively - could improve")
+                    st.error(f"⚠️ Defense WORSE than stats show")
+                    st.caption(f"(Concedes {away_defense:.2f} but xGA suggests {away_xg_against:.2f} - conceding MORE than expected)")
                 else:
                     st.info(f"📊 Defense matches expected performance")
                 
