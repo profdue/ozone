@@ -1,6 +1,6 @@
 """
-Football Predictor Pro v2.0 - FINAL FIXED VERSION
-Completely fixed defensive analysis and pattern detection
+Football Predictor Pro v2.0 - COMPLETE FIXED VERSION
+General logic fixes for form calculation, pattern detection, and xG analysis
 """
 
 import streamlit as st
@@ -69,7 +69,7 @@ class MatchContext:
 
 class PredictionEngineV2:
     """
-    Prediction Engine v2.0 with xG Integration - FINALLY FIXED VERSION
+    Prediction Engine v2.0 with xG Integration - COMPLETE FIXED VERSION
     """
     
     def __init__(self, context: Optional[MatchContext] = None):
@@ -87,19 +87,23 @@ class PredictionEngineV2:
             'WEAK_ATTACK': 1.0,
             
             # Performance
-            'HIGH_CLEAN_SHEET': 0.5,
-            'HIGH_FAILED_TO_SCORE': 0.4,
+            'HIGH_CLEAN_SHEET': 0.45,      # Lowered from 0.50 for better detection
+            'HIGH_FAILED_TO_SCORE': 0.35,  # Lowered from 0.40 for better detection
             
             # Form
-            'GOOD_FORM': 1.1,
-            'POOR_FORM': 0.9,
+            'EXCELLENT_FORM': 1.15,        # Added for better form detection
+            'GOOD_FORM': 1.05,
+            'AVERAGE_FORM': 0.95,
+            'POOR_FORM': 0.85,
+            'VERY_POOR_FORM': 0.70,
             
             # Sample Size
             'MIN_GAMES_RELIABLE': 6,
             
             # xG thresholds
-            'XG_LUCKY_DEFENSE': 0.85,    # xGA < actual * 0.85
-            'XG_UNLUCKY_ATTACK': 1.15,   # xG > actual * 1.15
+            'XG_LUCKY_DEFENSE': 0.85,      # xGA < actual * 0.85
+            'XG_UNLUCKY_ATTACK': 1.15,     # xG > actual * 1.15
+            'XG_OVERPERFORMER': 0.85,      # actual > xG * 1.15 (scores more than creates)
         }
     
     def validate_and_adjust_metrics(self, team: TeamMetrics) -> TeamMetrics:
@@ -144,7 +148,7 @@ class PredictionEngineV2:
     def calculate_form_factor(self, team: TeamMetrics) -> float:
         """
         Compare recent performance to season average
-        Returns multiplier between 0.8 and 1.2
+        Returns multiplier between 0.7 and 1.3 (wider range for extreme cases)
         """
         recent_goals_pg = team.goals_scored_last_5 / 5
         season_avg = team.attack_strength
@@ -153,7 +157,25 @@ class PredictionEngineV2:
             return 1.0
         
         form_ratio = recent_goals_pg / season_avg
-        bounded_form = max(0.8, min(1.2, form_ratio))
+        
+        # FIXED: Better handling of extreme form cases
+        if form_ratio >= 1.5:      # Scoring 50%+ more recently
+            bounded_form = 1.3
+        elif form_ratio >= 1.3:    # Scoring 30%+ more recently
+            bounded_form = 1.2
+        elif form_ratio >= 1.15:   # Scoring 15%+ more recently
+            bounded_form = 1.1
+        elif form_ratio <= 0.5:    # Scoring 50%+ less recently
+            bounded_form = 0.7
+        elif form_ratio <= 0.7:    # Scoring 30%+ less recently
+            bounded_form = 0.8
+        elif form_ratio <= 0.85:   # Scoring 15%+ less recently
+            bounded_form = 0.9
+        else:
+            bounded_form = form_ratio  # Keep as is for normal ranges
+        
+        # Ensure reasonable bounds
+        bounded_form = max(0.7, min(1.3, bounded_form))
         
         # Weight based on sample size reliability
         if team.games_played < self.THRESHOLDS['MIN_GAMES_RELIABLE']:
@@ -219,14 +241,14 @@ class PredictionEngineV2:
         expected_away *= self.context.away_penalty
         
         # Reasonable bounds
-        expected_home = max(0.2, min(3.0, expected_home))
-        expected_away = max(0.2, min(3.0, expected_away))
+        expected_home = max(0.2, min(3.5, expected_home))
+        expected_away = max(0.2, min(3.5, expected_away))
         
         return expected_home, expected_away
     
     def analyze_defensive_strength(self, team: TeamMetrics) -> Dict:
         """
-        Key defensive analysis that drives many adjustments - FINALLY CORRECTED
+        Key defensive analysis that drives many adjustments
         """
         analysis = {
             'is_very_strong': False,
@@ -245,12 +267,12 @@ class PredictionEngineV2:
         elif team.defense_strength >= self.THRESHOLDS['WEAK_DEFENSE']:
             analysis['is_weak'] = True
         
-        # FINAL FIX: xG enhancement - Compare xGA to actual goals conceded
+        # xG enhancement - Compare xGA to actual goals conceded
         # If xGA > Actual: Team concedes LESS than expected = Defense is BETTER than stats show
         # If xGA < Actual: Team concedes MORE than expected = Defense is WORSE than stats show
-        if team.xg_against > team.defense_strength * 1.15:
+        if team.xg_against > team.defense_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
             analysis['xg_better_than_actual'] = True  # Conceding LESS than expected = BETTER defense
-        elif team.xg_against < team.defense_strength * 0.85:
+        elif team.xg_against < team.defense_strength * self.THRESHOLDS['XG_LUCKY_DEFENSE']:
             analysis['xg_worse_than_actual'] = True   # Conceding MORE than expected = WORSE defense
         
         # Clean sheet analysis
@@ -302,6 +324,18 @@ class PredictionEngineV2:
         # If home team creates chances but doesn't finish (due for goals)
         if home.xg_for > home.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
             home_win_base *= 1.1
+        
+        # If away team creates chances but doesn't finish
+        if away.xg_for > away.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
+            away_win_base *= 1.1
+        
+        # If home team overperforming xG (due for regression)
+        if home.attack_strength > home.xg_for * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
+            home_win_base *= 0.9
+        
+        # If away team overperforming xG (due for regression)
+        if away.attack_strength > away.xg_for * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
+            away_win_base *= 0.9
         
         # If away team defense is worse than stats show (due to concede more)
         if away_defense_analysis['xg_worse_than_actual']:
@@ -383,6 +417,30 @@ class PredictionEngineV2:
                     f"{home.name} creates {home.xg_for:.2f} xG but scores {home.attack_strength:.2f} - due for goals"
                 )
         
+        # Home team overperforming xG (due for regression)
+        if home.attack_strength > home.xg_for * 1.2:
+            prob_over *= 0.9
+            if home.name:
+                xg_adjustments.append(
+                    f"{home.name} scores {home.attack_strength:.2f} but creates only {home.xg_for:.2f} xG - regression possible"
+                )
+        
+        # Away team creates chances but doesn't finish
+        if away.xg_for > away.attack_strength * 1.2:
+            prob_over *= 1.1
+            if away.name:
+                xg_adjustments.append(
+                    f"{away.name} creates {away.xg_for:.2f} xG but scores {away.attack_strength:.2f} - due for goals"
+                )
+        
+        # Away team overperforming xG (due for regression)
+        if away.attack_strength > away.xg_for * 1.2:
+            prob_over *= 0.9
+            if away.name:
+                xg_adjustments.append(
+                    f"{away.name} scores {away.attack_strength:.2f} but creates only {away.xg_for:.2f} xG - regression possible"
+                )
+        
         # Away team defense is worse than stats show
         if away_defense['xg_worse_than_actual']:
             prob_over *= 1.1
@@ -460,6 +518,18 @@ class PredictionEngineV2:
         if home.xg_for > home.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
             prob_btts *= 0.9  # Creates chances but doesn't finish
         
+        # Home team overperforming xG
+        if home.attack_strength > home.xg_for * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
+            prob_btts *= 1.1  # Scores more than creates - regression likely
+        
+        # Away team finishing issues
+        if away.xg_for > away.attack_strength * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
+            prob_btts *= 0.9  # Creates chances but doesn't finish
+        
+        # Away team overperforming xG
+        if away.attack_strength > away.xg_for * self.THRESHOLDS['XG_UNLUCKY_ATTACK']:
+            prob_btts *= 1.1  # Scores more than creates - regression likely
+        
         # Away team defensive luck
         if away_defense['xg_worse_than_actual']:
             prob_btts *= 1.1  # Defense worse than stats show - more likely to concede
@@ -504,7 +574,7 @@ class PredictionEngineV2:
     
     def analyze_matchup_patterns(self, home: TeamMetrics, away: TeamMetrics) -> List[str]:
         """
-        Generate key insights about the matchup - IMPROVED with no duplicates
+        Generate key insights about the matchup - COMPLETE FIXED VERSION
         """
         patterns = []
         
@@ -512,21 +582,44 @@ class PredictionEngineV2:
         home_name = home.name or "Home team"
         away_name = away.name or "Away team"
         
-        # Form patterns
+        # 1. Form patterns (IMPROVED with better thresholds)
         home_form = self.calculate_form_factor(home)
         away_form = self.calculate_form_factor(away)
         
-        if home_form >= self.THRESHOLDS['GOOD_FORM']:
+        if home_form >= self.THRESHOLDS['EXCELLENT_FORM']:
+            patterns.append(f"{home_name} in EXCELLENT form ({home.goals_scored_last_5} goals in last 5)")
+        elif home_form >= self.THRESHOLDS['GOOD_FORM']:
             patterns.append(f"{home_name} in GOOD form ({home.goals_scored_last_5} goals in last 5)")
+        elif home_form <= self.THRESHOLDS['VERY_POOR_FORM']:
+            patterns.append(f"{home_name} in VERY POOR form ({home.goals_scored_last_5} goals in last 5)")
         elif home_form <= self.THRESHOLDS['POOR_FORM']:
             patterns.append(f"{home_name} in POOR form ({home.goals_scored_last_5} goals in last 5)")
+        elif home_form < self.THRESHOLDS['AVERAGE_FORM']:
+            patterns.append(f"{home_name} in BELOW AVERAGE form ({home.goals_scored_last_5} goals in last 5)")
         
-        if away_form >= self.THRESHOLDS['GOOD_FORM']:
+        if away_form >= self.THRESHOLDS['EXCELLENT_FORM']:
+            patterns.append(f"{away_name} in EXCELLENT form ({away.goals_scored_last_5} goals in last 5)")
+        elif away_form >= self.THRESHOLDS['GOOD_FORM']:
             patterns.append(f"{away_name} in GOOD form ({away.goals_scored_last_5} goals in last 5)")
+        elif away_form <= self.THRESHOLDS['VERY_POOR_FORM']:
+            patterns.append(f"{away_name} in VERY POOR form ({away.goals_scored_last_5} goals in last 5)")
         elif away_form <= self.THRESHOLDS['POOR_FORM']:
             patterns.append(f"{away_name} in POOR form ({away.goals_scored_last_5} goals in last 5)")
+        elif away_form < self.THRESHOLDS['AVERAGE_FORM']:
+            patterns.append(f"{away_name} in BELOW AVERAGE form ({away.goals_scored_last_5} goals in last 5)")
         
-        # Defensive analysis
+        # 2. Attack strength patterns (ADDED - was missing)
+        if home.attack_strength >= self.THRESHOLDS['STRONG_ATTACK']:
+            patterns.append(f"{home_name} has STRONG attack ({home.attack_strength:.2f} goals/game)")
+        elif home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
+            patterns.append(f"{home_name} has WEAK attack ({home.attack_strength:.2f} goals/game)")
+        
+        if away.attack_strength >= self.THRESHOLDS['STRONG_ATTACK']:
+            patterns.append(f"{away_name} has STRONG attack ({away.attack_strength:.2f} goals/game)")
+        elif away.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
+            patterns.append(f"{away_name} has WEAK attack ({away.attack_strength:.2f} goals/game)")
+        
+        # 3. Defensive analysis
         home_defense = self.analyze_defensive_strength(home)
         away_defense = self.analyze_defensive_strength(away)
         
@@ -544,39 +637,46 @@ class PredictionEngineV2:
         elif away_defense['is_weak']:
             patterns.append(f"{away_name} has WEAK defense ({away.defense_strength:.2f} conceded/game)")
         
-        # Defensive battle detection
+        # 4. Defensive battle detection
         if (away_defense['is_very_strong'] or away_defense['is_strong']) and home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
             patterns.append("DEFENSIVE BATTLE likely - low scoring expected")
         
-        # High scoring potential
+        # 5. High scoring potential
         if home.attack_strength >= self.THRESHOLDS['STRONG_ATTACK'] and away_defense['is_weak']:
             patterns.append("HIGH SCORING POTENTIAL - strong attack vs weak defense")
         
-        # Clean sheet patterns
+        if away.attack_strength >= self.THRESHOLDS['STRONG_ATTACK'] and home_defense['is_weak']:
+            patterns.append("HIGH SCORING POTENTIAL - strong away attack vs weak home defense")
+        
+        # 6. Clean sheet patterns (ADDED - was missing)
         if home.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
-            patterns.append(f"{home_name} high clean sheet rate ({home.clean_sheet_pct:.0%})")
+            patterns.append(f"{home_name} keeps clean sheets ({home.clean_sheet_pct:.0%})")
         
         if away.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
-            patterns.append(f"{away_name} high clean sheet rate ({away.clean_sheet_pct:.0%})")
+            patterns.append(f"{away_name} keeps clean sheets ({away.clean_sheet_pct:.0%})")
         
-        # Failed to score patterns
+        # 7. Failed to score patterns (ADDED - was missing)
         if home.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            patterns.append(f"{home_name} struggles to score ({home.failed_to_score_pct:.0%} failed to score)")
+            patterns.append(f"{home_name} fails to score often ({home.failed_to_score_pct:.0%})")
         
         if away.failed_to_score_pct >= self.THRESHOLDS['HIGH_FAILED_TO_SCORE']:
-            patterns.append(f"{away_name} struggles to score ({away.failed_to_score_pct:.0%} failed to score)")
+            patterns.append(f"{away_name} fails to score often ({away.failed_to_score_pct:.0%})")
         
-        # xG patterns - only add unique ones
+        # 8. xG patterns - FIXED to detect BOTH underperformers AND overperformers
         home_xg_diff = home.xg_for - home.attack_strength
         away_xg_diff = away.xg_for - away.attack_strength
         
         if home_xg_diff > 0.2:
-            patterns.append(f"{home_name} creates chances - due for goals (+{home_xg_diff:.2f} xG)")
+            patterns.append(f"{home_name} creates chances ({home.xg_for:.2f} xG) - due for goals")
+        elif home_xg_diff < -0.2:
+            patterns.append(f"{home_name} overperforming xG ({home.attack_strength:.2f} goals vs {home.xg_for:.2f} xG) - regression possible")
         
         if away_xg_diff > 0.2:
-            patterns.append(f"{away_name} creates chances - due for goals (+{away_xg_diff:.2f} xG)")
+            patterns.append(f"{away_name} creates chances ({away.xg_for:.2f} xG) - due for goals")
+        elif away_xg_diff < -0.2:
+            patterns.append(f"{away_name} overperforming xG ({away.attack_strength:.2f} goals vs {away.xg_for:.2f} xG) - regression possible")
         
-        # Defensive xG patterns
+        # 9. Defensive xG patterns
         if home_defense['xg_better_than_actual']:
             patterns.append(f"{home_name} defense BETTER than stats show")
         elif home_defense['xg_worse_than_actual']:
@@ -587,13 +687,17 @@ class PredictionEngineV2:
         elif away_defense['xg_worse_than_actual']:
             patterns.append(f"{away_name} defense WORSE than stats show")
         
-        # Parity pattern
+        # 10. Parity pattern
         if abs(home.ppg - away.ppg) <= 0.2:
             patterns.append("CLOSE MATCHUP - draw possible")
         
-        # Home dominance
+        # 11. Home dominance
         if home.ppg > away.ppg + 0.5:
             patterns.append(f"{home_name} significantly stronger (+{home.ppg - away.ppg:.2f} PPG)")
+        
+        # 12. Away dominance
+        if away.ppg > home.ppg + 0.5:
+            patterns.append(f"{away_name} significantly stronger (+{away.ppg - home.ppg:.2f} PPG)")
         
         return patterns
     
@@ -732,6 +836,10 @@ def main():
         # Quick examples
         st.header("📋 Examples")
         
+        if st.button("Example: Preston vs Coventry"):
+            set_example_preston_coventry()
+            st.rerun()
+        
         if st.button("Example: Southampton vs West Brom"):
             set_example_southampton()
             st.rerun()
@@ -762,13 +870,13 @@ def main():
     with col_names[0]:
         home_name = st.text_input(
             "🏠 Home Team",
-            value=st.session_state.get('home_name', 'Southampton'),
+            value=st.session_state.get('home_name', 'Preston'),
             key="home_name_input"
         )
     with col_names[1]:
         away_name = st.text_input(
             "🚗 Away Team",
-            value=st.session_state.get('away_name', 'West Brom'),
+            value=st.session_state.get('away_name', 'Coventry'),
             key="away_name_input"
         )
     
@@ -788,7 +896,7 @@ def main():
                 home_attack = st.number_input(
                     "Goals/Game", 
                     0.0, 5.0, 
-                    value=float(st.session_state.get('home_attack', 1.44)), 
+                    value=float(st.session_state.get('home_attack', 1.40)), 
                     step=0.01,
                     key="home_attack_input"
                 )
@@ -796,7 +904,7 @@ def main():
                 home_defense = st.number_input(
                     "Conceded/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('home_defense', 0.89)), 
+                    value=float(st.session_state.get('home_defense', 1.00)), 
                     step=0.01,
                     key="home_defense_input"
                 )
@@ -807,7 +915,7 @@ def main():
                 home_ppg = st.number_input(
                     "Points/Game", 
                     0.0, 3.0,
-                    value=float(st.session_state.get('home_ppg', 1.67)), 
+                    value=float(st.session_state.get('home_ppg', 1.80)), 
                     step=0.01,
                     key="home_ppg_input"
                 )
@@ -826,14 +934,14 @@ def main():
                 home_cs = st.number_input(
                     "Clean Sheet %", 
                     0, 100,
-                    value=int(st.session_state.get('home_cs', 33)),
+                    value=int(st.session_state.get('home_cs', 30)),
                     key="home_cs_input"
                 )
             with col_perf[1]:
                 home_fts = st.number_input(
                     "Fail to Score %", 
                     0, 100,
-                    value=int(st.session_state.get('home_fts', 33)),
+                    value=int(st.session_state.get('home_fts', 20)),
                     key="home_fts_input"
                 )
         
@@ -846,7 +954,7 @@ def main():
                 away_attack = st.number_input(
                     "Goals/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('away_attack', 1.00)), 
+                    value=float(st.session_state.get('away_attack', 2.50)), 
                     step=0.01,
                     key="away_attack_input"
                 )
@@ -854,7 +962,7 @@ def main():
                 away_defense = st.number_input(
                     "Conceded/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('away_defense', 1.70)), 
+                    value=float(st.session_state.get('away_defense', 1.40)), 
                     step=0.01,
                     key="away_defense_input"
                 )
@@ -865,7 +973,7 @@ def main():
                 away_ppg = st.number_input(
                     "Points/Game", 
                     0.0, 3.0,
-                    value=float(st.session_state.get('away_ppg', 0.90)), 
+                    value=float(st.session_state.get('away_ppg', 2.00)), 
                     step=0.01,
                     key="away_ppg_input"
                 )
@@ -884,14 +992,14 @@ def main():
                 away_cs = st.number_input(
                     "Clean Sheet %", 
                     0, 100,
-                    value=int(st.session_state.get('away_cs', 20)),
+                    value=int(st.session_state.get('away_cs', 40)),
                     key="away_cs_input"
                 )
             with col_perf[1]:
                 away_fts = st.number_input(
                     "Fail to Score %", 
                     0, 100,
-                    value=int(st.session_state.get('away_fts', 30)),
+                    value=int(st.session_state.get('away_fts', 20)),
                     key="away_fts_input"
                 )
     
@@ -908,7 +1016,7 @@ def main():
                 home_xg_for = st.number_input(
                     "xG Created/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('home_xg_for', 1.79)), 
+                    value=float(st.session_state.get('home_xg_for', 1.36)), 
                     step=0.01,
                     key="home_xg_for_input"
                 )
@@ -916,7 +1024,7 @@ def main():
                 home_xg_against = st.number_input(
                     "xG Conceded/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('home_xg_against', 1.14)), 
+                    value=float(st.session_state.get('home_xg_against', 1.42)), 
                     step=0.01,
                     key="home_xg_against_input"
                 )
@@ -929,7 +1037,7 @@ def main():
                 away_xg_for = st.number_input(
                     "xG Created/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('away_xg_for', 1.20)), 
+                    value=float(st.session_state.get('away_xg_for', 1.86)), 
                     step=0.01,
                     key="away_xg_for_input"
                 )
@@ -937,7 +1045,7 @@ def main():
                 away_xg_against = st.number_input(
                     "xG Conceded/Game", 
                     0.0, 5.0,
-                    value=float(st.session_state.get('away_xg_against', 1.90)), 
+                    value=float(st.session_state.get('away_xg_against', 1.40)), 
                     step=0.01,
                     key="away_xg_against_input"
                 )
@@ -954,14 +1062,14 @@ def main():
                 home_goals5 = st.number_input(
                     "Goals Scored (Last 5)", 
                     0, 30,
-                    value=int(st.session_state.get('home_goals5', 9)),
+                    value=int(st.session_state.get('home_goals5', 7)),
                     key="home_goals5_input"
                 )
             with col_form[1]:
                 home_conceded5 = st.number_input(
                     "Goals Conceded (Last 5)", 
                     0, 30,
-                    value=int(st.session_state.get('home_conceded5', 4)),
+                    value=int(st.session_state.get('home_conceded5', 7)),
                     key="home_conceded5_input"
                 )
         
@@ -973,14 +1081,14 @@ def main():
                 away_goals5 = st.number_input(
                     "Goals Scored (Last 5)", 
                     0, 30,
-                    value=int(st.session_state.get('away_goals5', 5)),
+                    value=int(st.session_state.get('away_goals5', 9)),
                     key="away_goals5_input"
                 )
             with col_form[1]:
                 away_conceded5 = st.number_input(
                     "Goals Conceded (Last 5)", 
                     0, 30,
-                    value=int(st.session_state.get('away_conceded5', 10)),
+                    value=int(st.session_state.get('away_conceded5', 9)),
                     key="away_conceded5_input"
                 )
     
@@ -992,7 +1100,7 @@ def main():
             h2h_btts = st.number_input(
                 "H2H BTTS %", 
                 0, 100,
-                value=int(st.session_state.get('h2h_btts', 60)),
+                value=int(st.session_state.get('h2h_btts', 40)),
                 key="h2h_btts_input",
                 help="Percentage of previous meetings where both teams scored"
             )
@@ -1084,17 +1192,29 @@ def main():
                     home_form = result_pred['form_factors']['home']
                     away_form = result_pred['form_factors']['away']
                     
-                    if home_form > 1.0:
+                    if home_form >= 1.15:
+                        st.success(f"**{home_name}:** {home_form:.2f}x (Excellent form)")
+                    elif home_form >= 1.05:
                         st.success(f"**{home_name}:** {home_form:.2f}x (Good form)")
-                    elif home_form < 1.0:
+                    elif home_form <= 0.70:
+                        st.error(f"**{home_name}:** {home_form:.2f}x (Very poor form)")
+                    elif home_form <= 0.85:
                         st.error(f"**{home_name}:** {home_form:.2f}x (Poor form)")
+                    elif home_form < 0.95:
+                        st.warning(f"**{home_name}:** {home_form:.2f}x (Below average form)")
                     else:
                         st.info(f"**{home_name}:** {home_form:.2f}x (Average form)")
                     
-                    if away_form > 1.0:
+                    if away_form >= 1.15:
+                        st.success(f"**{away_name}:** {away_form:.2f}x (Excellent form)")
+                    elif away_form >= 1.05:
                         st.success(f"**{away_name}:** {away_form:.2f}x (Good form)")
-                    elif away_form < 1.0:
+                    elif away_form <= 0.70:
+                        st.error(f"**{away_name}:** {away_form:.2f}x (Very poor form)")
+                    elif away_form <= 0.85:
                         st.error(f"**{away_name}:** {away_form:.2f}x (Poor form)")
+                    elif away_form < 0.95:
+                        st.warning(f"**{away_name}:** {away_form:.2f}x (Below average form)")
                     else:
                         st.info(f"**{away_name}:** {away_form:.2f}x (Average form)")
             
@@ -1160,7 +1280,10 @@ def main():
             if over_under_pred.get('xg_adjustments'):
                 st.header("🔍 xG-Based Adjustments")
                 for adjustment in over_under_pred['xg_adjustments']:
-                    st.info(adjustment)
+                    if "regression" in adjustment.lower():
+                        st.warning(adjustment)
+                    else:
+                        st.info(adjustment)
             
             # Match patterns and insights
             if patterns:
@@ -1171,7 +1294,7 @@ def main():
                 seen_patterns = set()
                 for pattern in patterns:
                     # Create a simplified key for deduplication
-                    key = pattern.lower().replace("xg", "").replace("due for", "").strip()
+                    key = ''.join(filter(str.isalpha, pattern.lower()))
                     if key not in seen_patterns:
                         seen_patterns.add(key)
                         unique_patterns.append(pattern)
@@ -1183,22 +1306,26 @@ def main():
                     
                     with col1:
                         for pattern in unique_patterns[:mid_point]:
-                            if "GOOD" in pattern or "STRONG" in pattern or "BETTER" in pattern:
+                            if "EXCELLENT" in pattern or "STRONG attack" in pattern or "BETTER than stats" in pattern:
                                 st.success(f"• {pattern}")
-                            elif "POOR" in pattern or "WEAK" in pattern or "WORSE" in pattern or "struggle" in pattern:
+                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "WORSE than stats" in pattern or "struggle" in pattern:
                                 st.error(f"• {pattern}")
-                            elif "due for" in pattern.lower():
+                            elif "due for goals" in pattern.lower():
+                                st.warning(f"• {pattern}")
+                            elif "regression possible" in pattern.lower():
                                 st.warning(f"• {pattern}")
                             else:
                                 st.info(f"• {pattern}")
                     
                     with col2:
                         for pattern in unique_patterns[mid_point:]:
-                            if "GOOD" in pattern or "STRONG" in pattern or "BETTER" in pattern:
+                            if "EXCELLENT" in pattern or "STRONG attack" in pattern or "BETTER than stats" in pattern:
                                 st.success(f"• {pattern}")
-                            elif "POOR" in pattern or "WEAK" in pattern or "WORSE" in pattern or "struggle" in pattern:
+                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "WORSE than stats" in pattern or "struggle" in pattern:
                                 st.error(f"• {pattern}")
-                            elif "due for" in pattern.lower():
+                            elif "due for goals" in pattern.lower():
+                                st.warning(f"• {pattern}")
+                            elif "regression possible" in pattern.lower():
                                 st.warning(f"• {pattern}")
                             else:
                                 st.info(f"• {pattern}")
@@ -1228,7 +1355,6 @@ def main():
                 st.write(f"**Goals Conceded/Game:** {home_defense:.2f}")
                 st.write(f"**xG Conceded/Game:** {home_xg_against:.2f}")
                 
-                # FIXED LOGIC: Now correct
                 if home_def_analysis['xg_better_than_actual']:
                     st.success(f"✅ Defense BETTER than stats show")
                     st.caption(f"(Concedes {home_defense:.2f} but xGA suggests {home_xg_against:.2f} - conceding LESS than expected)")
@@ -1258,7 +1384,6 @@ def main():
                 st.write(f"**Goals Conceded/Game:** {away_defense:.2f}")
                 st.write(f"**xG Conceded/Game:** {away_xg_against:.2f}")
                 
-                # FIXED LOGIC: Now correct
                 if away_def_analysis['xg_better_than_actual']:
                     st.success(f"✅ Defense BETTER than stats show")
                     st.caption(f"(Concedes {away_defense:.2f} but xGA suggests {away_xg_against:.2f} - conceding LESS than expected)")
@@ -1321,6 +1446,35 @@ def main():
                     st.warning(risk)
             else:
                 st.success("All predictions have reasonable confidence levels")
+
+def set_example_preston_coventry():
+    """Example: Preston vs Coventry with realistic data"""
+    st.session_state.home_name = "Preston"
+    st.session_state.home_attack = 1.40
+    st.session_state.home_defense = 1.00
+    st.session_state.home_ppg = 1.80
+    st.session_state.home_games = 19
+    st.session_state.home_cs = 30
+    st.session_state.home_fts = 20
+    st.session_state.home_xg_for = 1.36
+    st.session_state.home_xg_against = 1.42
+    st.session_state.home_goals5 = 7
+    st.session_state.home_conceded5 = 7
+    
+    st.session_state.away_name = "Coventry"
+    st.session_state.away_attack = 2.50
+    st.session_state.away_defense = 1.40
+    st.session_state.away_ppg = 2.00
+    st.session_state.away_games = 19
+    st.session_state.away_cs = 40
+    st.session_state.away_fts = 20
+    st.session_state.away_xg_for = 1.86
+    st.session_state.away_xg_against = 1.40
+    st.session_state.away_goals5 = 9
+    st.session_state.away_conceded5 = 9
+    
+    st.session_state.h2h_btts = 40
+    st.session_state.h2h_meetings = 5
 
 def set_example_southampton():
     """Example: Southampton vs West Brom with realistic data"""
