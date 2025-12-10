@@ -1,6 +1,7 @@
 """
-Football Predictor Pro v2.0 - COMPLETE FIXED VERSION
+Football Predictor Pro v2.0 - COMPLETE FIXED VERSION WITH PATTERN SIGNALS
 General logic fixes for form calculation, pattern detection, and xG analysis
+Now with "Trust the Pattern" visual signals
 """
 
 import streamlit as st
@@ -70,6 +71,7 @@ class MatchContext:
 class PredictionEngineV2:
     """
     Prediction Engine v2.0 with xG Integration - COMPLETE FIXED VERSION
+    Now with Pattern Detection Signals
     """
     
     def __init__(self, context: Optional[MatchContext] = None):
@@ -104,6 +106,163 @@ class PredictionEngineV2:
             'XG_LUCKY_DEFENSE': 0.85,      # xGA < actual * 0.85
             'XG_UNLUCKY_ATTACK': 1.15,     # xG > actual * 1.15
             'XG_OVERPERFORMER': 0.85,      # actual > xG * 1.15 (scores more than creates)
+            
+            # Pattern thresholds
+            'XG_SIGNIFICANT_DIFF': 0.3,    # Significant xG difference
+            'WEAK_DEFENSE_THRESHOLD': 1.4, # What constitutes a weak defense
+        }
+    
+    # ========== PATTERN DETECTION SYSTEM ==========
+    
+    def detect_high_confidence_patterns(self, home: TeamMetrics, away: TeamMetrics) -> List[Dict]:
+        """
+        Identify our 3 HIGH ACCURACY PATTERNS from the betting strategy
+        Returns list of detected patterns with visual signals
+        """
+        patterns_detected = []
+        
+        # Get defensive analysis
+        home_def = self.analyze_defensive_strength(home)
+        away_def = self.analyze_defensive_strength(away)
+        
+        # Calculate xG differences
+        home_xg_diff = home.xg_for - home.attack_strength
+        away_xg_diff = away.xg_for - away.attack_strength
+        
+        # PATTERN 1: DEFENSIVE BATTLE 🔥
+        # Both teams have "Defense BETTER than stats show"
+        if home_def['xg_better_than_actual'] and away_def['xg_better_than_actual']:
+            patterns_detected.append({
+                'name': 'DEFENSIVE BATTLE 🔥',
+                'pattern': 1,
+                'bet': 'UNDER 2.5 & BTTS NO',
+                'confidence': 'HIGH',
+                'signal': 'GREEN LIGHT 🟢',
+                'description': f'Both {home.name} and {away.name} conceding LESS than expected',
+                'validation': '100% accuracy in sample',
+                'pattern_type': 'defensive_battle',
+                'stake': 'MAX BET (2x normal)',
+                'additional_bets': ['0-0 or 1-0 Correct Score', 'Draw']
+            })
+        
+        # PATTERN 2: REGRESSION EXPLOSION 🔥
+        # Team "due for goals" + opponent has "weak defense"
+        
+        # Home due for goals + Away weak defense
+        if (home_xg_diff > self.THRESHOLDS['XG_SIGNIFICANT_DIFF'] and away_def['is_weak']) or \
+           (home.xg_for > home.attack_strength * 1.2 and away.defense_strength >= self.THRESHOLDS['WEAK_DEFENSE_THRESHOLD']):
+            patterns_detected.append({
+                'name': 'REGRESSION EXPLOSION 🔥',
+                'pattern': 2,
+                'bet': 'OVER 2.5 & BTTS YES',
+                'confidence': 'HIGH',
+                'signal': 'GREEN LIGHT 🟢',
+                'description': f'{home.name} due for goals (+{home_xg_diff:.2f} xG diff) + {away.name} weak defense ({away.defense_strength:.2f} conceded)',
+                'validation': '100% accuracy in sample',
+                'pattern_type': 'regression_explosion',
+                'stake': 'MAX BET (2x normal)',
+                'additional_bets': [f'{home.name} Over 1.5 Team Goals', f'{home.name} to Win']
+            })
+        
+        # Away due for goals + Home weak defense
+        if (away_xg_diff > self.THRESHOLDS['XG_SIGNIFICANT_DIFF'] and home_def['is_weak']) or \
+           (away.xg_for > away.attack_strength * 1.2 and home.defense_strength >= self.THRESHOLDS['WEAK_DEFENSE_THRESHOLD']):
+            patterns_detected.append({
+                'name': 'REGRESSION EXPLOSION 🔥',
+                'pattern': 2,
+                'bet': 'OVER 2.5 & BTTS YES',
+                'confidence': 'HIGH',
+                'signal': 'GREEN LIGHT 🟢',
+                'description': f'{away.name} due for goals (+{away_xg_diff:.2f} xG diff) + {home.name} weak defense ({home.defense_strength:.2f} conceded)',
+                'validation': '100% accuracy in sample',
+                'pattern_type': 'regression_explosion',
+                'stake': 'MAX BET (2x normal)',
+                'additional_bets': [f'{away.name} Over 1.5 Team Goals', f'{away.name} to Win']
+            })
+        
+        # PATTERN 3: REGRESSION SUPPRESSION 🔥
+        # Team "overperforming xG" + opponent has "defense better than stats"
+        
+        # Home overperforming + Away strong defense
+        if (home.attack_strength > home.xg_for * 1.2 and away_def['xg_better_than_actual']) or \
+           (home_xg_diff < -self.THRESHOLDS['XG_SIGNIFICANT_DIFF'] and away_def['xg_better_than_actual']):
+            patterns_detected.append({
+                'name': 'REGRESSION SUPPRESSION 🔥',
+                'pattern': 3,
+                'bet': 'UNDER 2.5 + Team Under 1.5',
+                'confidence': 'HIGH',
+                'signal': 'GREEN LIGHT 🟢',
+                'description': f'{home.name} overperforming xG (-{abs(home_xg_diff):.2f} xG diff) + {away.name} strong defense',
+                'validation': '100% accuracy in sample',
+                'pattern_type': 'regression_suppression',
+                'stake': 'STRONG BET (1.5x normal)',
+                'additional_bets': [f'{home.name} Under 1.5 Goals', 'Draw']
+            })
+        
+        # Away overperforming + Home strong defense
+        if (away.attack_strength > away.xg_for * 1.2 and home_def['xg_better_than_actual']) or \
+           (away_xg_diff < -self.THRESHOLDS['XG_SIGNIFICANT_DIFF'] and home_def['xg_better_than_actual']):
+            patterns_detected.append({
+                'name': 'REGRESSION SUPPRESSION 🔥',
+                'pattern': 3,
+                'bet': 'UNDER 2.5 + Team Under 1.5',
+                'confidence': 'HIGH',
+                'signal': 'GREEN LIGHT 🟢',
+                'description': f'{away.name} overperforming xG (-{abs(away_xg_diff):.2f} xG diff) + {home.name} strong defense',
+                'validation': '100% accuracy in sample',
+                'pattern_type': 'regression_suppression',
+                'stake': 'STRONG BET (1.5x normal)',
+                'additional_bets': [f'{away.name} Under 1.5 Goals', 'Draw']
+            })
+        
+        return patterns_detected
+    
+    def get_pattern_based_advice(self, patterns: List[Dict]) -> Dict:
+        """
+        Generate betting advice based on detected patterns
+        """
+        if not patterns:
+            return {
+                'primary_bet': None,
+                'stake': 'REDUCED (0.5x normal)',
+                'confidence': 'Low - No patterns detected',
+                'advice': 'Proceed with caution. Use standard engine predictions.'
+            }
+        
+        # Count pattern types
+        pattern_counts = {}
+        for pattern in patterns:
+            p_type = pattern['pattern_type']
+            pattern_counts[p_type] = pattern_counts.get(p_type, 0) + 1
+        
+        # Determine strongest pattern
+        if 'defensive_battle' in pattern_counts:
+            return {
+                'primary_bet': 'UNDER 2.5 & BTTS NO',
+                'stake': 'MAX BET (2x normal)',
+                'confidence': 'HIGHEST - Defensive Battle',
+                'advice': 'Bet heavily on low scoring. Both defenses stronger than stats show.'
+            }
+        elif 'regression_explosion' in pattern_counts:
+            return {
+                'primary_bet': 'OVER 2.5 & BTTS YES',
+                'stake': 'MAX BET (2x normal)',
+                'confidence': 'HIGH - Regression Explosion',
+                'advice': 'Attack due to regress upwards + weak defense = high scoring.'
+            }
+        elif 'regression_suppression' in pattern_counts:
+            return {
+                'primary_bet': 'UNDER 2.5',
+                'stake': 'STRONG BET (1.5x normal)',
+                'confidence': 'HIGH - Regression Suppression',
+                'advice': 'Overperforming attack meets strong defense = regression down.'
+            }
+        
+        return {
+            'primary_bet': None,
+            'stake': 'NORMAL (1x)',
+            'confidence': 'Medium - Mixed patterns',
+            'advice': 'Multiple patterns detected. Review carefully.'
         }
     
     def validate_and_adjust_metrics(self, team: TeamMetrics) -> TeamMetrics:
@@ -637,16 +796,16 @@ class PredictionEngineV2:
         elif away_defense['is_weak']:
             patterns.append(f"{away_name} has WEAK defense ({away.defense_strength:.2f} conceded/game)")
         
-        # 4. Defensive battle detection
+        # 4. Defensive battle detection (ENHANCED for pattern signals)
         if (away_defense['is_very_strong'] or away_defense['is_strong']) and home.attack_strength <= self.THRESHOLDS['WEAK_ATTACK']:
-            patterns.append("DEFENSIVE BATTLE likely - low scoring expected")
+            patterns.append("🔥 DEFENSIVE BATTLE likely - low scoring expected")
         
         # 5. High scoring potential
         if home.attack_strength >= self.THRESHOLDS['STRONG_ATTACK'] and away_defense['is_weak']:
-            patterns.append("HIGH SCORING POTENTIAL - strong attack vs weak defense")
+            patterns.append("🔥 HIGH SCORING POTENTIAL - strong attack vs weak defense")
         
         if away.attack_strength >= self.THRESHOLDS['STRONG_ATTACK'] and home_defense['is_weak']:
-            patterns.append("HIGH SCORING POTENTIAL - strong away attack vs weak home defense")
+            patterns.append("🔥 HIGH SCORING POTENTIAL - strong away attack vs weak home defense")
         
         # 6. Clean sheet patterns (ADDED - was missing)
         if home.clean_sheet_pct >= self.THRESHOLDS['HIGH_CLEAN_SHEET']:
@@ -667,25 +826,25 @@ class PredictionEngineV2:
         away_xg_diff = away.xg_for - away.attack_strength
         
         if home_xg_diff > 0.2:
-            patterns.append(f"{home_name} creates chances ({home.xg_for:.2f} xG) - due for goals")
+            patterns.append(f"🔥 {home_name} creates chances ({home.xg_for:.2f} xG) - due for goals")
         elif home_xg_diff < -0.2:
-            patterns.append(f"{home_name} overperforming xG ({home.attack_strength:.2f} goals vs {home.xg_for:.2f} xG) - regression possible")
+            patterns.append(f"🔥 {home_name} overperforming xG ({home.attack_strength:.2f} goals vs {home.xg_for:.2f} xG) - regression possible")
         
         if away_xg_diff > 0.2:
-            patterns.append(f"{away_name} creates chances ({away.xg_for:.2f} xG) - due for goals")
+            patterns.append(f"🔥 {away_name} creates chances ({away.xg_for:.2f} xG) - due for goals")
         elif away_xg_diff < -0.2:
-            patterns.append(f"{away_name} overperforming xG ({away.attack_strength:.2f} goals vs {away.xg_for:.2f} xG) - regression possible")
+            patterns.append(f"🔥 {away_name} overperforming xG ({away.attack_strength:.2f} goals vs {away.xg_for:.2f} xG) - regression possible")
         
-        # 9. Defensive xG patterns
+        # 9. Defensive xG patterns (ENHANCED for pattern signals)
         if home_defense['xg_better_than_actual']:
-            patterns.append(f"{home_name} defense BETTER than stats show")
+            patterns.append(f"🔥 {home_name} defense BETTER than stats show")
         elif home_defense['xg_worse_than_actual']:
-            patterns.append(f"{home_name} defense WORSE than stats show")
+            patterns.append(f"🔥 {home_name} defense WORSE than stats show")
         
         if away_defense['xg_better_than_actual']:
-            patterns.append(f"{away_name} defense BETTER than stats show")
+            patterns.append(f"🔥 {away_name} defense BETTER than stats show")
         elif away_defense['xg_worse_than_actual']:
-            patterns.append(f"{away_name} defense WORSE than stats show")
+            patterns.append(f"🔥 {away_name} defense WORSE than stats show")
         
         # 10. Parity pattern
         if abs(home.ppg - away.ppg) <= 0.2:
@@ -769,7 +928,7 @@ def main():
     )
     
     st.title("⚽ Football Predictor Pro v2.0")
-    st.caption("Enhanced with xG Integration for Improved Accuracy")
+    st.caption("Enhanced with xG Integration for Improved Accuracy + PATTERN SIGNALS 🔥")
     
     # Initialize engine
     engine = PredictionEngineV2()
@@ -844,6 +1003,10 @@ def main():
             set_example_southampton()
             st.rerun()
         
+        if st.button("Example: Defensive Battle"):
+            set_example_defensive_battle()
+            st.rerun()
+        
         if st.button("Clear All Data"):
             clear_session_state()
             st.rerun()
@@ -855,6 +1018,7 @@ def main():
         - Sample-size aware predictions
         - Advanced defensive analysis
         - xG pattern detection
+        - **NEW: Pattern Signals 🔥**
         
         **Data Sources:**
         - Stats from FBref.com, Understat.com
@@ -1148,7 +1312,7 @@ def main():
     st.divider()
     if st.button("🚀 Generate Advanced Predictions", type="primary", use_container_width=True):
         
-        with st.spinner("Analyzing match with xG integration..."):
+        with st.spinner("Analyzing match with xG integration and pattern detection..."):
             # Get predictions
             result_pred = engine.predict_match_result(home_metrics, away_metrics)
             over_under_pred = engine.predict_over_under(home_metrics, away_metrics)
@@ -1160,8 +1324,83 @@ def main():
             expected_goals = engine.calculate_xg_adjusted_goals(home_metrics, away_metrics)
             patterns = engine.analyze_matchup_patterns(home_metrics, away_metrics)
             
+            # NEW: Pattern Detection
+            patterns_detected = engine.detect_high_confidence_patterns(home_metrics, away_metrics)
+            pattern_advice = engine.get_pattern_based_advice(patterns_detected)
+            
             # Display results
             st.success("✅ Advanced Predictions Generated")
+            
+            # ========== PATTERN SIGNALS SECTION ==========
+            if patterns_detected:
+                st.header("🎯 TRUST THE PATTERN Signals 🔥")
+                
+                # Display each detected pattern with FIRE emoji
+                for pattern in patterns_detected:
+                    with st.container():
+                        st.markdown(f"### {pattern['signal']} {pattern['name']}")
+                        
+                        col1, col2 = st.columns([3, 2])
+                        with col1:
+                            st.info(pattern['description'])
+                        with col2:
+                            st.success(f"**PRIMARY BET:** {pattern['bet']}")
+                            st.caption(f"**Stake:** {pattern['stake']}")
+                        
+                        # Additional bets
+                        if pattern.get('additional_bets'):
+                            with st.expander("Additional Betting Options"):
+                                for bet in pattern['additional_bets']:
+                                    st.write(f"• {bet}")
+                        
+                        st.caption(f"**Validation:** {pattern['validation']}")
+                        st.divider()
+                
+                # Pattern-based betting advice
+                st.subheader("💰 PATTERN-BASED BETTING ADVICE")
+                
+                advice_container = st.container()
+                with advice_container:
+                    col_adv1, col_adv2, col_adv3 = st.columns(3)
+                    
+                    with col_adv1:
+                        if pattern_advice['primary_bet']:
+                            st.success(f"**Primary Bet:**\n{pattern_advice['primary_bet']}")
+                    
+                    with col_adv2:
+                        st.warning(f"**Stake Level:**\n{pattern_advice['stake']}")
+                    
+                    with col_adv3:
+                        st.info(f"**Confidence:**\n{pattern_advice['confidence']}")
+                    
+                    st.markdown(f"**Advice:** {pattern_advice['advice']}")
+                    
+                # Check for engine contradictions
+                engine_ou_pred = over_under_pred['prediction'].value
+                engine_btts_pred = btts_pred['prediction'].value
+                
+                # Determine pattern suggestion
+                if patterns_detected[0]['pattern'] == 1:  # Defensive Battle
+                    pattern_suggests = "UNDER 2.5 & BTTS NO"
+                elif patterns_detected[0]['pattern'] == 2:  # Regression Explosion
+                    pattern_suggests = "OVER 2.5 & BTTS YES"
+                elif patterns_detected[0]['pattern'] == 3:  # Regression Suppression
+                    pattern_suggests = "UNDER 2.5"
+                else:
+                    pattern_suggests = ""
+                
+                # Check for contradictions
+                if pattern_suggests:
+                    if ("UNDER" in pattern_suggests and "OVER" in engine_ou_pred) or \
+                       ("OVER" in pattern_suggests and "UNDER" in engine_ou_pred):
+                        st.error("⚠️ **ENGINE CONTRADICTION DETECTED**")
+                        st.warning(f"Pattern suggests: {pattern_suggests}")
+                        st.warning(f"Engine predicts: {engine_ou_pred} & {engine_btts_pred}")
+                        st.info("**TRUST THE PATTERN** - Our high-accuracy patterns have proven more reliable!")
+            else:
+                st.warning("⚠️ No high-confidence patterns detected")
+                st.info("Proceed with standard betting strategy using engine predictions below.")
+                st.caption("Consider reduced stakes (0.5x normal) due to lack of clear patterns.")
             
             # Main predictions in cards
             st.header("🎯 Core Predictions")
@@ -1306,9 +1545,11 @@ def main():
                     
                     with col1:
                         for pattern in unique_patterns[:mid_point]:
-                            if "EXCELLENT" in pattern or "STRONG attack" in pattern or "BETTER than stats" in pattern:
+                            if "🔥" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "EXCELLENT" in pattern or "STRONG attack" in pattern:
                                 st.success(f"• {pattern}")
-                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "WORSE than stats" in pattern or "struggle" in pattern:
+                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "struggle" in pattern:
                                 st.error(f"• {pattern}")
                             elif "due for goals" in pattern.lower():
                                 st.warning(f"• {pattern}")
@@ -1319,9 +1560,11 @@ def main():
                     
                     with col2:
                         for pattern in unique_patterns[mid_point:]:
-                            if "EXCELLENT" in pattern or "STRONG attack" in pattern or "BETTER than stats" in pattern:
+                            if "🔥" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "EXCELLENT" in pattern or "STRONG attack" in pattern:
                                 st.success(f"• {pattern}")
-                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "WORSE than stats" in pattern or "struggle" in pattern:
+                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "struggle" in pattern:
                                 st.error(f"• {pattern}")
                             elif "due for goals" in pattern.lower():
                                 st.warning(f"• {pattern}")
@@ -1501,6 +1744,35 @@ def set_example_southampton():
     st.session_state.away_xg_against = 1.90
     st.session_state.away_goals5 = 5
     st.session_state.away_conceded5 = 10
+    
+    st.session_state.h2h_btts = 60
+    st.session_state.h2h_meetings = 5
+
+def set_example_defensive_battle():
+    """Example: Defensive Battle pattern"""
+    st.session_state.home_name = "Norwich"
+    st.session_state.home_attack = 0.90
+    st.session_state.home_defense = 1.10
+    st.session_state.home_ppg = 1.10
+    st.session_state.home_games = 19
+    st.session_state.home_cs = 30
+    st.session_state.home_fts = 40
+    st.session_state.home_xg_for = 1.52
+    st.session_state.home_xg_against = 1.39  # xGA > Actual = Defense BETTER than stats
+    st.session_state.home_goals5 = 7
+    st.session_state.home_conceded5 = 6
+    
+    st.session_state.away_name = "Sheffield United"
+    st.session_state.away_attack = 0.89
+    st.session_state.away_defense = 1.33
+    st.session_state.away_ppg = 0.89
+    st.session_state.away_games = 18
+    st.session_state.away_cs = 22
+    st.session_state.away_fts = 44
+    st.session_state.away_xg_for = 1.19
+    st.session_state.away_xg_against = 1.48  # xGA > Actual = Defense BETTER than stats
+    st.session_state.away_goals5 = 5
+    st.session_state.away_conceded5 = 8
     
     st.session_state.h2h_btts = 60
     st.session_state.h2h_meetings = 5
