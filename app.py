@@ -1,6 +1,6 @@
 """
-Football Predictor Pro v2.0 with TRACKING SYSTEM - COMPLETE FILE
-Enhanced with xG Integration, Pattern Detection, and Performance Tracking
+Football Predictor Pro v2.0 with TRACKING SYSTEM - FIXED VERSION
+Fixed JSON serialization error
 """
 
 import streamlit as st
@@ -12,7 +12,8 @@ import csv
 from datetime import datetime
 from pathlib import Path
 import uuid
-from typing import Dict, Tuple, List, Optional, Any 
+from typing import Dict, Tuple, List, Optional, Any
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from enum import Enum
 
@@ -31,6 +32,22 @@ class Prediction(Enum):
     UNDER_25 = "Under 2.5"
     BTTS_YES = "BTTS Yes"
     BTTS_NO = "BTTS No"
+
+# ========== JSON SERIALIZATION FIX ==========
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    """Enhanced JSON encoder that handles Prediction enums"""
+    def default(self, obj):
+        if isinstance(obj, Prediction):
+            return obj.value  # Return the string value
+        elif isinstance(obj, Enum):
+            return obj.value
+        elif hasattr(obj, '__dict__'):
+            # Handle dataclasses and custom objects
+            return obj.__dict__
+        elif isinstance(obj, (datetime, pd.Timestamp)):
+            return obj.isoformat()
+        return super().default(obj)
 
 @dataclass
 class TeamMetrics:
@@ -109,7 +126,7 @@ class PredictionTracker:
         safe_away = away_team.replace(" ", "_").replace("/", "-")
         filename = f"{match_date}_{safe_home}_vs_{safe_away}_{prediction_id}.json"
         
-        # Prepare data
+        # Prepare data - CONVERT ALL ENUMS TO STRINGS
         prediction_data = {
             "prediction_id": prediction_id,
             "timestamp": datetime.now().isoformat(),
@@ -120,20 +137,74 @@ class PredictionTracker:
                 "prediction_date": datetime.now().strftime("%Y-%m-%d")
             },
             "inputs": inputs,
-            "predictions": predictions,
+            "predictions": self._convert_predictions_for_json(predictions),
             "result": None,  # To be filled later
             "result_added": False
         }
         
-        # Save to file
+        # Save to file with custom encoder
         filepath = self.predictions_dir / filename
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(prediction_data, f, indent=2, ensure_ascii=False)
+            json.dump(prediction_data, f, indent=2, ensure_ascii=False, cls=EnhancedJSONEncoder)
         
         # Also add to results CSV if not exists
         self._add_to_results_tracker(prediction_id, home_team, away_team, match_date)
         
         return prediction_id
+    
+    def _convert_predictions_for_json(self, predictions: Dict) -> Dict:
+        """Convert prediction objects to JSON-serializable format"""
+        serializable = {}
+        
+        for key, value in predictions.items():
+            if isinstance(value, dict):
+                # Recursively convert nested dicts
+                serializable[key] = self._convert_dict_for_json(value)
+            elif isinstance(value, (Prediction, Enum)):
+                # Convert enums to strings
+                serializable[key] = value.value
+            elif hasattr(value, '__dict__'):
+                # Convert objects to dicts
+                serializable[key] = self._convert_dict_for_json(value.__dict__)
+            else:
+                serializable[key] = value
+        
+        return serializable
+    
+    def _convert_dict_for_json(self, data: Dict) -> Dict:
+        """Recursively convert dict to JSON-serializable format"""
+        result = {}
+        
+        for key, value in data.items():
+            if isinstance(value, dict):
+                result[key] = self._convert_dict_for_json(value)
+            elif isinstance(value, list):
+                result[key] = [self._convert_for_json(item) for item in value]
+            elif isinstance(value, (Prediction, Enum)):
+                result[key] = value.value
+            elif hasattr(value, '__dict__'):
+                result[key] = self._convert_dict_for_json(value.__dict__)
+            elif isinstance(value, (datetime, pd.Timestamp)):
+                result[key] = value.isoformat()
+            else:
+                result[key] = value
+        
+        return result
+    
+    def _convert_for_json(self, item):
+        """Convert any item to JSON-serializable format"""
+        if isinstance(item, dict):
+            return self._convert_dict_for_json(item)
+        elif isinstance(item, list):
+            return [self._convert_for_json(i) for i in item]
+        elif isinstance(item, (Prediction, Enum)):
+            return item.value
+        elif hasattr(item, '__dict__'):
+            return self._convert_dict_for_json(item.__dict__)
+        elif isinstance(item, (datetime, pd.Timestamp)):
+            return item.isoformat()
+        else:
+            return item
     
     def _add_to_results_tracker(self, prediction_id: str, home: str, away: str, match_date: str):
         """Add prediction to results CSV for easy tracking"""
@@ -786,6 +857,7 @@ class PredictionEngineV2:
         
         return {
             'prediction': prediction,
+            'prediction_value': prediction.value,  # Added for JSON serialization
             'probabilities': {
                 'home_win': round(home_prob, 3),
                 'draw': round(draw_prob, 3),
@@ -890,6 +962,7 @@ class PredictionEngineV2:
         
         return {
             'prediction': prediction,
+            'prediction_value': prediction.value,  # Added for JSON serialization
             'confidence': confidence,
             'probabilities': {
                 'over': round(prob_over, 3),
@@ -986,6 +1059,7 @@ class PredictionEngineV2:
         
         return {
             'prediction': prediction,
+            'prediction_value': prediction.value,  # Added for JSON serialization
             'confidence': confidence,
             'probabilities': {
                 'btts_yes': round(prob_btts, 3),
@@ -1244,9 +1318,10 @@ def render_enter_results(tracker: PredictionTracker):
         if prediction:
             pred_details = prediction.get('predictions', {})
             if 'match_result' in pred_details:
-                st.write(f"**Your Prediction:** {pred_details['match_result'].get('prediction', 'N/A')}")
-            if 'over_under' in pred_details:
-                st.write(f"**O/U Prediction:** {pred_details['over_under'].get('prediction', 'N/A')}")
+                # Handle both old and new format
+                mr_data = pred_details['match_result']
+                if isinstance(mr_data, dict):
+                    st.write(f"**Your Prediction:** {mr_data.get('prediction_value', mr_data.get('prediction', 'N/A'))}")
         
         # Result input form
         with st.form(f"result_form_{prediction_id}"):
@@ -1982,19 +2057,42 @@ def main():
             pattern_advice = engine.get_pattern_based_advice(patterns_detected)
             
             # ========== SAVE PREDICTION TO TRACKING SYSTEM ==========
+            # Convert predictions to serializable format
+            serializable_predictions = {
+                'match_result': {
+                    'prediction': result_pred['prediction'].value,
+                    'prediction_value': result_pred['prediction'].value,
+                    'probabilities': result_pred['probabilities'],
+                    'form_factors': result_pred['form_factors'],
+                    'defensive_analysis': result_pred['defensive_analysis']
+                },
+                'over_under': {
+                    'prediction': over_under_pred['prediction'].value,
+                    'prediction_value': over_under_pred['prediction'].value,
+                    'confidence': over_under_pred['confidence'],
+                    'probabilities': over_under_pred['probabilities'],
+                    'expected_goals': over_under_pred['expected_goals'],
+                    'xg_adjustments': over_under_pred.get('xg_adjustments', []),
+                    'detailed_expected': over_under_pred['detailed_expected']
+                },
+                'btts': {
+                    'prediction': btts_pred['prediction'].value,
+                    'prediction_value': btts_pred['prediction'].value,
+                    'confidence': btts_pred['confidence'],
+                    'probabilities': btts_pred['probabilities'],
+                    'form_factors': btts_pred['form_factors']
+                },
+                'expected_goals': {'home': expected_goals[0], 'away': expected_goals[1]},
+                'patterns': patterns_detected,
+                'pattern_advice': pattern_advice,
+                'matchup_patterns': patterns
+            }
+            
             prediction_id = tracker.save_prediction(
                 home_team=home_name,
                 away_team=away_name,
                 match_date=str(match_date),
-                predictions={
-                    'match_result': result_pred,
-                    'over_under': over_under_pred,
-                    'btts': btts_pred,
-                    'expected_goals': {'home': expected_goals[0], 'away': expected_goals[1]},
-                    'patterns': patterns_detected,
-                    'pattern_advice': pattern_advice,
-                    'matchup_patterns': patterns
-                },
+                predictions=serializable_predictions,
                 inputs={
                     'home_metrics': {
                         'attack_strength': home_attack,
@@ -2357,18 +2455,13 @@ def main():
             recommendations = []
             
             # Match result
-            if result_pred['prediction'] == Prediction.HOME_WIN:
-                recommendations.append(f"**Home Win** ({result_pred['probabilities']['home_win']:.1%} probability)")
-            elif result_pred['prediction'] == Prediction.AWAY_WIN:
-                recommendations.append(f"**Away Win** ({result_pred['probabilities']['away_win']:.1%} probability)")
-            else:
-                recommendations.append(f"**Draw** ({result_pred['probabilities']['draw']:.1%} probability)")
+            recommendations.append(f"**{result_pred['prediction'].value}** ({result_pred['probabilities']['home_win']:.1%} H, {result_pred['probabilities']['draw']:.1%} D, {result_pred['probabilities']['away_win']:.1%} A)")
             
             # Over/Under
-            recommendations.append(f"**{over_under_pred['prediction'].value}** ({over_under_pred['probabilities']['over' if 'Over' in over_under_pred['prediction'].value else 'under']:.1%} probability)")
+            recommendations.append(f"**{over_under_pred['prediction'].value}** ({over_under_pred['probabilities']['over' if 'Over' in over_under_pred['prediction'].value else 'under']:.1%})")
             
             # BTTS
-            recommendations.append(f"**{btts_pred['prediction'].value}** ({btts_pred['probabilities']['btts_yes' if 'Yes' in btts_pred['prediction'].value else 'btts_no']:.1%} probability)")
+            recommendations.append(f"**{btts_pred['prediction'].value}** ({btts_pred['probabilities']['btts_yes' if 'Yes' in btts_pred['prediction'].value else 'btts_no']:.1%})")
             
             # Display recommendations
             st.info(" | ".join(recommendations))
