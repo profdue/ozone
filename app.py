@@ -1027,6 +1027,73 @@ class PredictionEngineV2:
 # ========== STREAMLIT APP ==========
 
 def main():
+    def main():
+    # ========== DIAGNOSTIC TEST ==========
+    st.title("🔍 Google Sheets Connection Diagnostic")
+    
+    # Test 1: Check if secrets are loaded
+    st.subheader("Test 1: Secrets Loading")
+    if 'google_sheets' in st.secrets:
+        st.success("✅ 'google_sheets' key found in secrets")
+        
+        # Test 2: Check specific keys
+        required_keys = ['type', 'project_id', 'private_key_id', 'private_key', 
+                        'client_email', 'client_id', 'auth_uri', 'token_uri']
+        missing_keys = []
+        for key in required_keys:
+            if key not in st.secrets['google_sheets']:
+                missing_keys.append(key)
+        
+        if missing_keys:
+            st.error(f"❌ Missing keys: {missing_keys}")
+        else:
+            st.success("✅ All required keys present")
+            
+            # Test 3: Test connection to Google Sheets
+            st.subheader("Test 3: Google Sheets Connection")
+            try:
+                import gspread
+                from google.oauth2.service_account import Credentials
+                
+                # Create credentials
+                creds_dict = dict(st.secrets['google_sheets'])
+                credentials = Credentials.from_service_account_info(
+                    creds_dict,
+                    scopes=['https://www.googleapis.com/auth/spreadsheets']
+                )
+                
+                # Test connection
+                client = gspread.authorize(credentials)
+                
+                # Try to open the spreadsheet
+                spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/13Zw4TksoH9P1PWv1HuNpapZOOnT_dIm_Pr85qRof4yE/edit#gid=0")
+                worksheet = spreadsheet.sheet1
+                
+                # Test read access
+                test_data = worksheet.get_all_values()
+                st.success(f"✅ Successfully connected! Found {len(test_data)} rows in sheet")
+                
+                # Test write access
+                test_timestamp = datetime.now(pytz.UTC).strftime("%Y-%m-%d %H:%M:%S")
+                test_row = [test_timestamp, "Test Home", "Test Away", "Test Pattern", 
+                           "Test Bet", "1x", "Medium", "PENDING", "", "", "Diagnostic Test"]
+                worksheet.append_row(test_row)
+                st.success("✅ Successfully wrote test row to Google Sheet!")
+                
+            except gspread.exceptions.APIError as e:
+                st.error(f"❌ Google Sheets API Error: {str(e)}")
+                if "PERMISSION_DENIED" in str(e):
+                    st.info("📋 **Solution**: Make sure you've shared the Google Sheet with the service account email: ozone-football@football-prediction-tracker.iam.gserviceaccount.com")
+                elif "invalid_grant" in str(e).lower():
+                    st.info("🔑 **Solution**: The private key format may still be incorrect. Try regenerating the service account credentials.")
+            except Exception as e:
+                st.error(f"❌ Connection Error: {str(e)}")
+    else:
+        st.error("❌ 'google_sheets' key NOT found in secrets")
+        st.info("📋 **Solution**: Make sure your .streamlit/secrets.toml file is in the correct location and contains the [google_sheets] section")
+    
+    st.divider()
+    # ========== END DIAGNOSTIC ==========
     st.set_page_config(
         page_title="Football Predictor Pro v2.0 - WITH TRACKING",
         page_icon="⚽",
