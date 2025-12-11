@@ -1,15 +1,13 @@
 """
-Football Predictor Pro v2.0 with SESSION STATE TRACKING
-Streamlit Cloud Compatible - No File System Access Needed
+Football Predictor Pro v2.0 - COMPLETE FIXED VERSION WITH PATTERN SIGNALS
+General logic fixes for form calculation, pattern detection, and xG analysis
+Now with "Trust the Pattern" visual signals
 """
 
 import streamlit as st
 import pandas as pd
 import math
-import json
-from datetime import datetime
-import uuid
-from typing import Dict, Tuple, List, Optional, Any
+from typing import Dict, Tuple, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -69,282 +67,6 @@ class MatchContext:
     # Venue Multipliers
     home_advantage: float = 1.15
     away_penalty: float = 0.92
-
-# ========== SESSION STATE TRACKING SYSTEM ==========
-
-class PredictionTracker:
-    """
-    Session-based tracking system for predictions and results
-    (No file system access needed - Streamlit Cloud compatible)
-    """
-    
-    def __init__(self):
-        # Initialize session state if not exists
-        if 'predictions' not in st.session_state:
-            st.session_state.predictions = []
-        
-        if 'results' not in st.session_state:
-            st.session_state.results = []
-    
-    def save_prediction(self, 
-                       home_team: str, 
-                       away_team: str, 
-                       match_date: str,
-                       predictions: Dict,
-                       inputs: Dict) -> str:
-        """
-        Save a prediction to session state
-        Returns prediction_id for later reference
-        """
-        # Create unique ID
-        prediction_id = str(uuid.uuid4())[:8]
-        
-        # Convert predictions to serializable format
-        serializable_predictions = self._convert_predictions_for_json(predictions)
-        
-        # Prepare data
-        prediction_data = {
-            "prediction_id": prediction_id,
-            "timestamp": datetime.now().isoformat(),
-            "match_info": {
-                "home_team": home_team,
-                "away_team": away_team,
-                "match_date": match_date,
-                "prediction_date": datetime.now().strftime("%Y-%m-%d")
-            },
-            "inputs": inputs,
-            "predictions": serializable_predictions,
-            "result": None,
-            "result_added": False
-        }
-        
-        # Save to session state
-        st.session_state.predictions.append(prediction_data)
-        
-        # Also add to results tracker
-        self._add_to_results_tracker(prediction_id, home_team, away_team, match_date)
-        
-        return prediction_id
-    
-    def _convert_predictions_for_json(self, predictions: Dict) -> Dict:
-        """Convert prediction objects to serializable format"""
-        serializable = {}
-        
-        for key, value in predictions.items():
-            if isinstance(value, dict):
-                # Recursively convert nested dicts
-                serializable[key] = self._convert_dict_for_json(value)
-            elif isinstance(value, (Prediction, Enum)):
-                # Convert enums to strings
-                serializable[key] = value.value
-            elif hasattr(value, '__dict__'):
-                # Convert objects to dicts
-                serializable[key] = self._convert_dict_for_json(value.__dict__)
-            else:
-                serializable[key] = value
-        
-        return serializable
-    
-    def _convert_dict_for_json(self, data: Dict) -> Dict:
-        """Recursively convert dict to JSON-serializable format"""
-        result = {}
-        
-        for key, value in data.items():
-            if isinstance(value, dict):
-                result[key] = self._convert_dict_for_json(value)
-            elif isinstance(value, list):
-                result[key] = [self._convert_for_json(item) for item in value]
-            elif isinstance(value, (Prediction, Enum)):
-                result[key] = value.value
-            elif hasattr(value, '__dict__'):
-                result[key] = self._convert_dict_for_json(value.__dict__)
-            elif isinstance(value, datetime):
-                result[key] = value.isoformat()
-            else:
-                result[key] = value
-        
-        return result
-    
-    def _convert_for_json(self, item):
-        """Convert any item to JSON-serializable format"""
-        if isinstance(item, dict):
-            return self._convert_dict_for_json(item)
-        elif isinstance(item, list):
-            return [self._convert_for_json(i) for i in item]
-        elif isinstance(item, (Prediction, Enum)):
-            return item.value
-        elif hasattr(item, '__dict__'):
-            return self._convert_dict_for_json(item.__dict__)
-        elif isinstance(item, datetime):
-            return item.isoformat()
-        else:
-            return item
-    
-    def _add_to_results_tracker(self, prediction_id: str, home: str, away: str, match_date: str):
-        """Add prediction to results list in session state"""
-        new_entry = {
-            'prediction_id': prediction_id,
-            'match_date': match_date,
-            'home_team': home,
-            'away_team': away,
-            'result_entered': 'NO',
-            'actual_result': '',
-            'actual_score': '',
-            'actual_btts': '',
-            'actual_over_under': '',
-            'notes': ''
-        }
-        
-        # Add to results list
-        st.session_state.results.append(new_entry)
-    
-    def enter_result(self, 
-                    prediction_id: str,
-                    result: str,  # 1/X/2
-                    score: str,   # "2-1"
-                    btts: str,    # "Yes"/"No"
-                    over_under: str,  # "Over"/"Under"
-                    notes: str = "") -> bool:
-        """
-        Enter match result for a prediction
-        Returns success status
-        """
-        try:
-            # Update results in session state
-            for res in st.session_state.results:
-                if res['prediction_id'] == prediction_id:
-                    res['result_entered'] = 'YES'
-                    res['actual_result'] = result
-                    res['actual_score'] = score
-                    res['actual_btts'] = btts
-                    res['actual_over_under'] = over_under
-                    res['notes'] = notes
-                    break
-            
-            # Also update prediction in session state
-            for pred in st.session_state.predictions:
-                if pred['prediction_id'] == prediction_id:
-                    pred['result'] = {
-                        'actual_result': result,
-                        'actual_score': score,
-                        'actual_btts': btts,
-                        'actual_over_under': over_under,
-                        'notes': notes,
-                        'result_date': datetime.now().isoformat()
-                    }
-                    pred['result_added'] = True
-                    break
-            
-            return True
-            
-        except Exception as e:
-            st.error(f"Error saving result: {e}")
-            return False
-    
-    def get_pending_results(self) -> pd.DataFrame:
-        """Get predictions waiting for results"""
-        if 'results' not in st.session_state or not st.session_state.results:
-            return pd.DataFrame()
-        
-        pending = [r for r in st.session_state.results if r['result_entered'] == 'NO']
-        
-        if not pending:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(pending)
-        
-        # Add days until match
-        if 'match_date' in df.columns:
-            df['days_until_match'] = df['match_date'].apply(
-                lambda x: (pd.to_datetime(x) - pd.Timestamp.today()).days
-                if pd.notna(x) and str(x) != 'nan' else None
-            )
-        
-        return df
-    
-    def get_completed_matches(self) -> pd.DataFrame:
-        """Get matches with results entered"""
-        if 'results' not in st.session_state or not st.session_state.results:
-            return pd.DataFrame()
-        
-        completed = [r for r in st.session_state.results if r['result_entered'] == 'YES']
-        
-        if not completed:
-            return pd.DataFrame()
-        
-        return pd.DataFrame(completed)
-    
-    def get_performance_stats(self) -> Dict:
-        """Get performance statistics"""
-        if 'results' not in st.session_state or not st.session_state.results:
-            return {}
-        
-        completed = [r for r in st.session_state.results if r['result_entered'] == 'YES']
-        
-        if not completed:
-            return {}
-        
-        # Initialize stats
-        stats = {
-            'total_matches': len(completed),
-            'last_updated': datetime.now().isoformat(),
-            'by_market': {},
-            'by_pattern': {},
-            'overall': {}
-        }
-        
-        # Calculate results distribution
-        result_counts = {}
-        for res in completed:
-            result = res.get('actual_result', '')
-            if result and result != '':
-                result_counts[result] = result_counts.get(result, 0) + 1
-        
-        if result_counts:
-            stats['by_market']['result'] = {
-                'results_distribution': result_counts,
-                'total': len(completed)
-            }
-        
-        return stats
-    
-    def get_prediction_by_id(self, prediction_id: str) -> Optional[Dict]:
-        """Get a specific prediction by ID"""
-        if 'predictions' not in st.session_state or not st.session_state.predictions:
-            return None
-        
-        for pred in st.session_state.predictions:
-            if pred['prediction_id'] == prediction_id:
-                return pred
-        
-        return None
-    
-    def get_recent_predictions(self, limit: int = 10) -> pd.DataFrame:
-        """Get recent predictions"""
-        if 'predictions' not in st.session_state or not st.session_state.predictions:
-            return pd.DataFrame()
-        
-        predictions = []
-        
-        # Sort by timestamp (most recent first)
-        sorted_predictions = sorted(
-            st.session_state.predictions, 
-            key=lambda x: x.get('timestamp', ''), 
-            reverse=True
-        )[:limit]
-        
-        for pred in sorted_predictions:
-            predictions.append({
-                'prediction_id': pred['prediction_id'],
-                'match': f"{pred['match_info']['home_team']} vs {pred['match_info']['away_team']}",
-                'date': pred['match_info']['match_date'],
-                'prediction_date': pred['match_info'].get('prediction_date', ''),
-                'result_added': pred.get('result_added', False)
-            })
-        
-        return pd.DataFrame(predictions)
-
-# ========== PREDICTION ENGINE v2.0 ==========
 
 class PredictionEngineV2:
     """
@@ -798,7 +520,6 @@ class PredictionEngineV2:
         
         return {
             'prediction': prediction,
-            'prediction_value': prediction.value,
             'probabilities': {
                 'home_win': round(home_prob, 3),
                 'draw': round(draw_prob, 3),
@@ -903,7 +624,6 @@ class PredictionEngineV2:
         
         return {
             'prediction': prediction,
-            'prediction_value': prediction.value,
             'confidence': confidence,
             'probabilities': {
                 'over': round(prob_over, 3),
@@ -1000,7 +720,6 @@ class PredictionEngineV2:
         
         return {
             'prediction': prediction,
-            'prediction_value': prediction.value,
             'confidence': confidence,
             'probabilities': {
                 'btts_yes': round(prob_btts, 3),
@@ -1198,377 +917,20 @@ class PredictionEngineV2:
         else:
             return "Toss-up"
 
-# ========== STREAMLIT TRACKING INTERFACE ==========
-
-def render_tracking_dashboard(tracker: PredictionTracker):
-    """Main tracking interface"""
-    st.title("📊 Prediction Tracking Dashboard")
-    
-    # Tabs for different views
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📝 Enter Results", 
-        "⏳ Pending Matches", 
-        "✅ Completed Matches", 
-        "📈 Performance"
-    ])
-    
-    with tab1:
-        render_enter_results(tracker)
-    
-    with tab2:
-        render_pending_matches(tracker)
-    
-    with tab3:
-        render_completed_matches(tracker)
-    
-    with tab4:
-        render_performance_dashboard(tracker)
-
-def render_enter_results(tracker: PredictionTracker):
-    """Interface to enter match results"""
-    st.subheader("📝 Enter Match Results")
-    
-    # Get pending matches
-    pending = tracker.get_pending_results()
-    
-    if len(pending) == 0:
-        st.info("No pending matches to enter results for.")
-        return
-    
-    # Select match
-    pending['display'] = pending.apply(
-        lambda row: f"{row['home_team']} vs {row['away_team']} ({row['match_date']})", 
-        axis=1
-    )
-    
-    selected_display = st.selectbox(
-        "Select match to enter result:",
-        pending['display'].tolist()
-    )
-    
-    if selected_display:
-        # Get the selected row
-        selected_row = pending[pending['display'] == selected_display].iloc[0]
-        prediction_id = selected_row['prediction_id']
-        
-        st.write(f"**Match:** {selected_row['home_team']} vs {selected_row['away_team']}")
-        st.write(f"**Date:** {selected_row['match_date']}")
-        
-        # Get prediction details
-        prediction = tracker.get_prediction_by_id(prediction_id)
-        if prediction:
-            pred_details = prediction.get('predictions', {})
-            if 'match_result' in pred_details:
-                # Handle both old and new format
-                mr_data = pred_details['match_result']
-                if isinstance(mr_data, dict):
-                    st.write(f"**Your Prediction:** {mr_data.get('prediction_value', mr_data.get('prediction', 'N/A'))}")
-        
-        # Result input form
-        with st.form(f"result_form_{prediction_id}"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                result = st.selectbox("Result:", ["1", "X", "2"], 
-                                    help="1=Home Win, X=Draw, 2=Away Win")
-                score = st.text_input("Score (e.g., 2-1):", "0-0")
-            
-            with col2:
-                btts = st.selectbox("Both Teams Scored:", ["Yes", "No"])
-                over_under = st.selectbox("Over/Under 2.5:", ["Over", "Under"])
-            
-            notes = st.text_area("Notes (optional):", 
-                               placeholder="Any important context...")
-            
-            submitted = st.form_submit_button("✅ Save Result")
-            
-            if submitted:
-                if tracker.enter_result(prediction_id, result, score, btts, over_under, notes):
-                    st.success(f"✅ Result saved for {selected_row['home_team']} vs {selected_row['away_team']}")
-                    st.rerun()
-                else:
-                    st.error("Failed to save result. Please try again.")
-
-def render_pending_matches(tracker: PredictionTracker):
-    """Show matches waiting for results"""
-    st.subheader("⏳ Matches Waiting for Results")
-    
-    pending = tracker.get_pending_results()
-    
-    if len(pending) == 0:
-        st.success("✅ All matches have results entered!")
-        return
-    
-    st.write(f"**{len(pending)} matches pending results:**")
-    
-    # Display as a nice table
-    display_cols = ['match_date', 'home_team', 'away_team', 'days_until_match']
-    display_df = pending[display_cols].copy()
-    display_df.columns = ['Date', 'Home', 'Away', 'Days Until Match']
-    
-    # Color code by days
-    def color_days(val):
-        if val is None:
-            return ''
-        if val < 0:
-            return 'background-color: #ffcccc'  # Red for past due
-        elif val <= 2:
-            return 'background-color: #fff3cd'  # Yellow for imminent
-        else:
-            return ''
-    
-    styled_df = display_df.style.applymap(color_days, subset=['Days Until Match'])
-    st.dataframe(styled_df, use_container_width=True)
-    
-    # Quick actions
-    st.write("**Quick Actions:**")
-    if st.button("🔄 Refresh List"):
-        st.rerun()
-
-def render_completed_matches(tracker: PredictionTracker):
-    """Show matches with results entered"""
-    st.subheader("✅ Completed Matches with Results")
-    
-    completed = tracker.get_completed_matches()
-    
-    if len(completed) == 0:
-        st.info("No completed matches yet. Enter results in the 'Enter Results' tab.")
-        return
-    
-    st.write(f"**{len(completed)} matches with results:**")
-    
-    # Filter options
-    col1, col2 = st.columns(2)
-    with col1:
-        team_filter = st.text_input("Filter by team:", "")
-    with col2:
-        sort_by = st.selectbox("Sort by:", ["Date (newest)", "Date (oldest)", "Home Team"])
-    
-    # Apply filters
-    display_df = completed.copy()
-    
-    if team_filter:
-        mask = (display_df['home_team'].str.contains(team_filter, case=False)) | \
-               (display_df['away_team'].str.contains(team_filter, case=False))
-        display_df = display_df[mask]
-    
-    # Sort
-    if sort_by == "Date (newest)":
-        display_df = display_df.sort_values('match_date', ascending=False)
-    elif sort_by == "Date (oldest)":
-        display_df = display_df.sort_values('match_date', ascending=True)
-    elif sort_by == "Home Team":
-        display_df = display_df.sort_values('home_team')
-    
-    # Display
-    display_cols = ['match_date', 'home_team', 'away_team', 'actual_result', 
-                   'actual_score', 'actual_btts', 'actual_over_under', 'notes']
-    
-    display_df = display_df[display_cols].copy()
-    display_df.columns = ['Date', 'Home', 'Away', 'Result', 'Score', 'BTTS', 'O/U', 'Notes']
-    
-    st.dataframe(display_df, use_container_width=True)
-    
-    # Export option
-    if st.button("📥 Export to CSV"):
-        csv = display_df.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name=f"prediction_results_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-def render_performance_dashboard(tracker: PredictionTracker):
-    """Show performance metrics"""
-    st.subheader("📈 Prediction Performance")
-    
-    stats = tracker.get_performance_stats()
-    
-    if not stats:
-        st.info("No performance data yet. Enter some results first.")
-        return
-    
-    # Overall stats
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Total Matches", stats['total_matches'])
-    
-    with col2:
-        last_updated = pd.to_datetime(stats['last_updated']).strftime('%Y-%m-%d %H:%M')
-        st.metric("Last Updated", last_updated)
-    
-    # Quick insights
-    st.subheader("📊 Results Distribution")
-    
-    if 'by_market' in stats and 'result' in stats['by_market']:
-        result_dist = stats['by_market']['result']['results_distribution']
-        
-        # Display as metrics
-        col_results = st.columns(3)
-        with col_results[0]:
-            st.metric("Home Wins (1)", result_dist.get('1', 0))
-        with col_results[1]:
-            st.metric("Draws (X)", result_dist.get('X', 0))
-        with col_results[2]:
-            st.metric("Away Wins (2)", result_dist.get('2', 0))
-    
-    # Recent predictions
-    st.subheader("🕐 Recent Predictions")
-    recent = tracker.get_recent_predictions(limit=20)
-    
-    if len(recent) > 0:
-        # Calculate completion rate
-        completed = recent['result_added'].sum()
-        completion_rate = (completed / len(recent)) * 100
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Recent Predictions", len(recent))
-        with col2:
-            st.metric("Completion Rate", f"{completion_rate:.1f}%")
-        
-        # Show recent table
-        display_recent = recent.copy()
-        display_recent.columns = ['ID', 'Match', 'Match Date', 'Prediction Date', 'Result Entered']
-        st.dataframe(display_recent, use_container_width=True)
-    
-    # Data management
-    st.subheader("🗃️ Data Management")
-    
-    if st.button("🔄 Refresh"):
-        st.rerun()
-    
-    if st.button("🗑️ Clear All Data"):
-        if st.checkbox("I'm sure I want to delete ALL prediction data"):
-            # Clear session state
-            if 'predictions' in st.session_state:
-                del st.session_state.predictions
-            if 'results' in st.session_state:
-                del st.session_state.results
-            
-            # Reinitialize tracker
-            tracker.__init__()
-            st.success("All data cleared!")
-            st.rerun()
-
-# ========== EXAMPLE DATA FUNCTIONS ==========
-
-def set_example_preston_coventry():
-    """Example: Preston vs Coventry with realistic data"""
-    st.session_state.home_name = "Preston"
-    st.session_state.home_attack = 1.40
-    st.session_state.home_defense = 1.00
-    st.session_state.home_ppg = 1.80
-    st.session_state.home_games = 19
-    st.session_state.home_cs = 30
-    st.session_state.home_fts = 20
-    st.session_state.home_xg_for = 1.36
-    st.session_state.home_xg_against = 1.42
-    st.session_state.home_goals5 = 7
-    st.session_state.home_conceded5 = 7
-    
-    st.session_state.away_name = "Coventry"
-    st.session_state.away_attack = 2.50
-    st.session_state.away_defense = 1.40
-    st.session_state.away_ppg = 2.00
-    st.session_state.away_games = 19
-    st.session_state.away_cs = 40
-    st.session_state.away_fts = 20
-    st.session_state.away_xg_for = 1.86
-    st.session_state.away_xg_against = 1.40
-    st.session_state.away_goals5 = 9
-    st.session_state.away_conceded5 = 9
-    
-    st.session_state.h2h_btts = 40
-    st.session_state.h2h_meetings = 5
-
-def set_example_southampton():
-    """Example: Southampton vs West Brom with realistic data"""
-    st.session_state.home_name = "Southampton"
-    st.session_state.home_attack = 1.44
-    st.session_state.home_defense = 0.89
-    st.session_state.home_ppg = 1.67
-    st.session_state.home_games = 19
-    st.session_state.home_cs = 33
-    st.session_state.home_fts = 33
-    st.session_state.home_xg_for = 1.79
-    st.session_state.home_xg_against = 1.14
-    st.session_state.home_goals5 = 9
-    st.session_state.home_conceded5 = 4
-    
-    st.session_state.away_name = "West Brom"
-    st.session_state.away_attack = 1.00
-    st.session_state.away_defense = 1.70
-    st.session_state.away_ppg = 0.90
-    st.session_state.away_games = 19
-    st.session_state.away_cs = 20
-    st.session_state.away_fts = 30
-    st.session_state.away_xg_for = 1.20
-    st.session_state.away_xg_against = 1.90
-    st.session_state.away_goals5 = 5
-    st.session_state.away_conceded5 = 10
-    
-    st.session_state.h2h_btts = 60
-    st.session_state.h2h_meetings = 5
-
-def set_example_defensive_battle():
-    """Example: Defensive Battle pattern"""
-    st.session_state.home_name = "Norwich"
-    st.session_state.home_attack = 0.90
-    st.session_state.home_defense = 1.10
-    st.session_state.home_ppg = 1.10
-    st.session_state.home_games = 19
-    st.session_state.home_cs = 30
-    st.session_state.home_fts = 40
-    st.session_state.home_xg_for = 1.52
-    st.session_state.home_xg_against = 1.39  # xGA > Actual = Defense BETTER than stats
-    st.session_state.home_goals5 = 7
-    st.session_state.home_conceded5 = 6
-    
-    st.session_state.away_name = "Sheffield United"
-    st.session_state.away_attack = 0.89
-    st.session_state.away_defense = 1.33
-    st.session_state.away_ppg = 0.89
-    st.session_state.away_games = 18
-    st.session_state.away_cs = 22
-    st.session_state.away_fts = 44
-    st.session_state.away_xg_for = 1.19
-    st.session_state.away_xg_against = 1.48  # xGA > Actual = Defense BETTER than stats
-    st.session_state.away_goals5 = 5
-    st.session_state.away_conceded5 = 8
-    
-    st.session_state.h2h_btts = 60
-    st.session_state.h2h_meetings = 5
-
-def clear_session_state():
-    """Clear all session state data"""
-    keys_to_clear = [
-        'home_name', 'home_attack', 'home_defense', 'home_ppg', 'home_games',
-        'home_cs', 'home_fts', 'home_xg_for', 'home_xg_against',
-        'home_goals5', 'home_conceded5',
-        'away_name', 'away_attack', 'away_defense', 'away_ppg', 'away_games',
-        'away_cs', 'away_fts', 'away_xg_for', 'away_xg_against',
-        'away_goals5', 'away_conceded5',
-        'h2h_btts', 'h2h_meetings'
-    ]
-    for key in keys_to_clear:
-        if key in st.session_state:
-            del st.session_state[key]
-
-# ========== MAIN APP ==========
+# ========== STREAMLIT APP ==========
 
 def main():
     st.set_page_config(
-        page_title="Football Predictor Pro v2.0 with Tracking",
+        page_title="Football Predictor Pro v2.0",
         page_icon="⚽",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
-    # Initialize tracker and engine - NO FILE SYSTEM ACCESS
-    tracker = PredictionTracker()  # Uses session state only
+    st.title("⚽ Football Predictor Pro v2.0")
+    st.caption("Enhanced with xG Integration for Improved Accuracy + PATTERN SIGNALS 🔥")
+    
+    # Initialize engine
     engine = PredictionEngineV2()
     
     # League contexts presets
@@ -1611,19 +973,6 @@ def main():
         "Other": MatchContext()
     }
     
-    # Check if we should show tracking dashboard
-    if st.session_state.get('show_tracking', False):
-        render_tracking_dashboard(tracker)
-        if st.button("← Back to Predictor"):
-            st.session_state.show_tracking = False
-            st.rerun()
-        return
-    
-    # ========== MAIN PREDICTOR INTERFACE ==========
-    
-    st.title("⚽ Football Predictor Pro v2.0 with Tracking")
-    st.caption("Enhanced with xG Integration + Session State Tracking 📊")
-    
     # Sidebar with advanced settings
     with st.sidebar:
         st.header("⚙️ Settings")
@@ -1636,35 +985,12 @@ def main():
         )
         engine.context = LEAGUE_CONTEXTS[league]
         
-        # TRACKING SYSTEM BUTTON
-        st.markdown("---")
-        st.header("📊 Tracking System")
-        if st.button("📈 Open Tracking Dashboard", use_container_width=True):
-            st.session_state.show_tracking = True
-            st.rerun()
-        
-        # Data management in sidebar
-        st.markdown("---")
-        st.header("🗃️ Data Management")
-        
-        if st.button("Initialize Session Data"):
-            # Reinitialize tracker
-            tracker.__init__()
-            st.success("Session data initialized!")
-            st.rerun()
-        
-        if st.button("Clear All Predictions", type="secondary"):
-            if st.checkbox("Confirm delete ALL predictions"):
-                # Clear session state
-                if 'predictions' in st.session_state:
-                    del st.session_state.predictions
-                if 'results' in st.session_state:
-                    del st.session_state.results
-                
-                # Reinitialize tracker
-                tracker.__init__()
-                st.success("All predictions cleared!")
-                st.rerun()
+        # Show league stats
+        with st.expander("League Statistics"):
+            st.write(f"**Average Goals:** {engine.context.league_avg_goals:.2f}")
+            st.write(f"**Average xG per team:** {engine.context.league_avg_xg:.2f}")
+            st.write(f"**Home Advantage:** {engine.context.home_advantage:.2f}x")
+            st.write(f"**Away Penalty:** {engine.context.away_penalty:.2f}x")
         
         # Quick examples
         st.header("📋 Examples")
@@ -1681,29 +1007,27 @@ def main():
             set_example_defensive_battle()
             st.rerun()
         
-        if st.button("Clear Inputs", type="secondary"):
+        if st.button("Clear All Data"):
             clear_session_state()
             st.rerun()
         
         # Info
         st.info("""
-        **Version 2.0 with Session Tracking:**
+        **Version 2.0 Features:**
         - xG Integration for better accuracy
-        - Pattern detection signals
-        - **NEW:** Session-based tracking
-        - **NEW:** No file system access needed
-        - **NEW:** Works on Streamlit Cloud
+        - Sample-size aware predictions
+        - Advanced defensive analysis
+        - xG pattern detection
+        - **NEW: Pattern Signals 🔥**
+        
+        **Data Sources:**
+        - Stats from FBref.com, Understat.com
+        - Championship 2023/24 season
+        - Updated regularly
         """)
     
     # Main interface
     st.header("📊 Enter Match Data")
-    
-    # Match date
-    match_date = st.date_input(
-        "📅 Match Date",
-        datetime.now(),
-        help="Required for tracking predictions"
-    )
     
     # Team names
     col_names = st.columns(2)
@@ -2004,82 +1328,469 @@ def main():
             patterns_detected = engine.detect_high_confidence_patterns(home_metrics, away_metrics)
             pattern_advice = engine.get_pattern_based_advice(patterns_detected)
             
-            # ========== SAVE PREDICTION TO SESSION STATE ==========
-            # Convert predictions to serializable format
-            serializable_predictions = {
-                'match_result': {
-                    'prediction': result_pred['prediction'].value,
-                    'prediction_value': result_pred['prediction'].value,
-                    'probabilities': result_pred['probabilities'],
-                    'form_factors': result_pred['form_factors'],
-                    'defensive_analysis': result_pred['defensive_analysis']
-                },
-                'over_under': {
-                    'prediction': over_under_pred['prediction'].value,
-                    'prediction_value': over_under_pred['prediction'].value,
-                    'confidence': over_under_pred['confidence'],
-                    'probabilities': over_under_pred['probabilities'],
-                    'expected_goals': over_under_pred['expected_goals'],
-                    'xg_adjustments': over_under_pred.get('xg_adjustments', []),
-                    'detailed_expected': over_under_pred['detailed_expected']
-                },
-                'btts': {
-                    'prediction': btts_pred['prediction'].value,
-                    'prediction_value': btts_pred['prediction'].value,
-                    'confidence': btts_pred['confidence'],
-                    'probabilities': btts_pred['probabilities'],
-                    'form_factors': btts_pred['form_factors']
-                },
-                'expected_goals': {'home': expected_goals[0], 'away': expected_goals[1]},
-                'patterns': patterns_detected,
-                'pattern_advice': pattern_advice,
-                'matchup_patterns': patterns
-            }
-            
-            prediction_id = tracker.save_prediction(
-                home_team=home_name,
-                away_team=away_name,
-                match_date=str(match_date),
-                predictions=serializable_predictions,
-                inputs={
-                    'home_metrics': {
-                        'attack_strength': home_attack,
-                        'defense_strength': home_defense,
-                        'ppg': home_ppg,
-                        'xg_for': home_xg_for,
-                        'xg_against': home_xg_against,
-                        'clean_sheet_pct': home_cs/100,
-                        'failed_to_score_pct': home_fts/100,
-                        'goals_scored_last_5': home_goals5,
-                        'goals_conceded_last_5': home_conceded5,
-                        'games_played': home_games
-                    },
-                    'away_metrics': {
-                        'attack_strength': away_attack,
-                        'defense_strength': away_defense,
-                        'ppg': away_ppg,
-                        'xg_for': away_xg_for,
-                        'xg_against': away_xg_against,
-                        'clean_sheet_pct': away_cs/100,
-                        'failed_to_score_pct': away_fts/100,
-                        'goals_scored_last_5': away_goals5,
-                        'goals_conceded_last_5': away_conceded5,
-                        'games_played': away_games
-                    },
-                    'league': league,
-                    'h2h_data': {
-                        'btts': h2h_btts,
-                        'meetings': h2h_meetings
-                    }
-                }
-            )
-            
             # Display results
-            st.success(f"✅ Advanced Predictions Generated (Saved as ID: {prediction_id})")
+            st.success("✅ Advanced Predictions Generated")
             
-            # Display the rest of your predictions (your existing display code)
-            # ... [Your existing display code for predictions goes here] ...
-            # I've removed it to save space, but it should be your original display code
+            # ========== PATTERN SIGNALS SECTION ==========
+            if patterns_detected:
+                st.header("🎯 TRUST THE PATTERN Signals 🔥")
+                
+                # Display each detected pattern with FIRE emoji
+                for pattern in patterns_detected:
+                    with st.container():
+                        st.markdown(f"### {pattern['signal']} {pattern['name']}")
+                        
+                        col1, col2 = st.columns([3, 2])
+                        with col1:
+                            st.info(pattern['description'])
+                        with col2:
+                            st.success(f"**PRIMARY BET:** {pattern['bet']}")
+                            st.caption(f"**Stake:** {pattern['stake']}")
+                        
+                        # Additional bets
+                        if pattern.get('additional_bets'):
+                            with st.expander("Additional Betting Options"):
+                                for bet in pattern['additional_bets']:
+                                    st.write(f"• {bet}")
+                        
+                        st.caption(f"**Validation:** {pattern['validation']}")
+                        st.divider()
+                
+                # Pattern-based betting advice
+                st.subheader("💰 PATTERN-BASED BETTING ADVICE")
+                
+                advice_container = st.container()
+                with advice_container:
+                    col_adv1, col_adv2, col_adv3 = st.columns(3)
+                    
+                    with col_adv1:
+                        if pattern_advice['primary_bet']:
+                            st.success(f"**Primary Bet:**\n{pattern_advice['primary_bet']}")
+                    
+                    with col_adv2:
+                        st.warning(f"**Stake Level:**\n{pattern_advice['stake']}")
+                    
+                    with col_adv3:
+                        st.info(f"**Confidence:**\n{pattern_advice['confidence']}")
+                    
+                    st.markdown(f"**Advice:** {pattern_advice['advice']}")
+                    
+                # Check for engine contradictions
+                engine_ou_pred = over_under_pred['prediction'].value
+                engine_btts_pred = btts_pred['prediction'].value
+                
+                # Determine pattern suggestion
+                if patterns_detected[0]['pattern'] == 1:  # Defensive Battle
+                    pattern_suggests = "UNDER 2.5 & BTTS NO"
+                elif patterns_detected[0]['pattern'] == 2:  # Regression Explosion
+                    pattern_suggests = "OVER 2.5 & BTTS YES"
+                elif patterns_detected[0]['pattern'] == 3:  # Regression Suppression
+                    pattern_suggests = "UNDER 2.5"
+                else:
+                    pattern_suggests = ""
+                
+                # Check for contradictions
+                if pattern_suggests:
+                    if ("UNDER" in pattern_suggests and "OVER" in engine_ou_pred) or \
+                       ("OVER" in pattern_suggests and "UNDER" in engine_ou_pred):
+                        st.error("⚠️ **ENGINE CONTRADICTION DETECTED**")
+                        st.warning(f"Pattern suggests: {pattern_suggests}")
+                        st.warning(f"Engine predicts: {engine_ou_pred} & {engine_btts_pred}")
+                        st.info("**TRUST THE PATTERN** - Our high-accuracy patterns have proven more reliable!")
+            else:
+                st.warning("⚠️ No high-confidence patterns detected")
+                st.info("Proceed with standard betting strategy using engine predictions below.")
+                st.caption("Consider reduced stakes (0.5x normal) due to lack of clear patterns.")
+            
+            # Main predictions in cards
+            st.header("🎯 Core Predictions")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.subheader("🏆 Match Result")
+                pred = result_pred['prediction'].value
+                st.metric("Prediction", pred)
+                
+                # Probability bars with better formatting
+                home_prob = result_pred['probabilities']['home_win']
+                draw_prob = result_pred['probabilities']['draw']
+                away_prob = result_pred['probabilities']['away_win']
+                
+                # Color-coded probabilities
+                col_prob = st.columns(3)
+                with col_prob[0]:
+                    st.metric("Home", f"{home_prob:.1%}")
+                with col_prob[1]:
+                    st.metric("Draw", f"{draw_prob:.1%}")
+                with col_prob[2]:
+                    st.metric("Away", f"{away_prob:.1%}")
+                
+                # Form factors
+                with st.expander("Form Factors"):
+                    home_form = result_pred['form_factors']['home']
+                    away_form = result_pred['form_factors']['away']
+                    
+                    if home_form >= 1.15:
+                        st.success(f"**{home_name}:** {home_form:.2f}x (Excellent form)")
+                    elif home_form >= 1.05:
+                        st.success(f"**{home_name}:** {home_form:.2f}x (Good form)")
+                    elif home_form <= 0.70:
+                        st.error(f"**{home_name}:** {home_form:.2f}x (Very poor form)")
+                    elif home_form <= 0.85:
+                        st.error(f"**{home_name}:** {home_form:.2f}x (Poor form)")
+                    elif home_form < 0.95:
+                        st.warning(f"**{home_name}:** {home_form:.2f}x (Below average form)")
+                    else:
+                        st.info(f"**{home_name}:** {home_form:.2f}x (Average form)")
+                    
+                    if away_form >= 1.15:
+                        st.success(f"**{away_name}:** {away_form:.2f}x (Excellent form)")
+                    elif away_form >= 1.05:
+                        st.success(f"**{away_name}:** {away_form:.2f}x (Good form)")
+                    elif away_form <= 0.70:
+                        st.error(f"**{away_name}:** {away_form:.2f}x (Very poor form)")
+                    elif away_form <= 0.85:
+                        st.error(f"**{away_name}:** {away_form:.2f}x (Poor form)")
+                    elif away_form < 0.95:
+                        st.warning(f"**{away_name}:** {away_form:.2f}x (Below average form)")
+                    else:
+                        st.info(f"**{away_name}:** {away_form:.2f}x (Average form)")
+            
+            with col2:
+                st.subheader("⚖️ Over/Under 2.5")
+                pred = over_under_pred['prediction'].value
+                conf = over_under_pred['confidence']
+                st.metric("Prediction", pred)
+                st.metric("Confidence", conf)
+                st.metric("Expected Goals", over_under_pred['expected_goals'])
+                
+                # Probability comparison
+                over_prob = over_under_pred['probabilities']['over']
+                under_prob = over_under_pred['probabilities']['under']
+                
+                col_ou = st.columns(2)
+                with col_ou[0]:
+                    st.metric("Over", f"{over_prob:.1%}")
+                with col_ou[1]:
+                    st.metric("Under", f"{under_prob:.1%}")
+            
+            with col3:
+                st.subheader("🎯 Both Teams to Score")
+                pred = btts_pred['prediction'].value
+                conf = btts_pred['confidence']
+                st.metric("Prediction", pred)
+                st.metric("Confidence", conf)
+                
+                # Probability comparison
+                yes_prob = btts_pred['probabilities']['btts_yes']
+                no_prob = btts_pred['probabilities']['btts_no']
+                
+                col_btts = st.columns(2)
+                with col_btts[0]:
+                    st.metric("Yes", f"{yes_prob:.1%}")
+                with col_btts[1]:
+                    st.metric("No", f"{no_prob:.1%}")
+                
+                # H2H influence
+                if h2h_btts:
+                    with st.expander("H2H Influence"):
+                        st.write(f"H2H BTTS: {h2h_btts}%")
+                        st.write(f"Meetings: {h2h_meetings}")
+            
+            # Expected goals breakdown
+            st.header("📊 Expected Goals Analysis")
+            
+            eg_home, eg_away = expected_goals
+            total_expected = eg_home + eg_away
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                delta_home = eg_home - home_attack
+                st.metric(f"🏠 {home_name}", f"{eg_home:.2f}", f"{delta_home:+.2f} vs avg")
+            with col2:
+                delta_away = eg_away - away_attack
+                st.metric(f"🚗 {away_name}", f"{eg_away:.2f}", f"{delta_away:+.2f} vs avg")
+            with col3:
+                delta_total = total_expected - engine.context.league_avg_goals
+                st.metric("Total Expected", f"{total_expected:.2f}", f"{delta_total:+.2f} vs league avg")
+            
+            # xG adjustments
+            if over_under_pred.get('xg_adjustments'):
+                st.header("🔍 xG-Based Adjustments")
+                for adjustment in over_under_pred['xg_adjustments']:
+                    if "regression" in adjustment.lower():
+                        st.warning(adjustment)
+                    else:
+                        st.info(adjustment)
+            
+            # Match patterns and insights
+            if patterns:
+                st.header("🧠 Key Insights & Patterns")
+                
+                # Remove duplicates while preserving order
+                unique_patterns = []
+                seen_patterns = set()
+                for pattern in patterns:
+                    # Create a simplified key for deduplication
+                    key = ''.join(filter(str.isalpha, pattern.lower()))
+                    if key not in seen_patterns:
+                        seen_patterns.add(key)
+                        unique_patterns.append(pattern)
+                
+                # Display unique patterns in columns
+                if unique_patterns:
+                    col1, col2 = st.columns(2)
+                    mid_point = len(unique_patterns) // 2
+                    
+                    with col1:
+                        for pattern in unique_patterns[:mid_point]:
+                            if "🔥" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "EXCELLENT" in pattern or "STRONG attack" in pattern:
+                                st.success(f"• {pattern}")
+                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "struggle" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "due for goals" in pattern.lower():
+                                st.warning(f"• {pattern}")
+                            elif "regression possible" in pattern.lower():
+                                st.warning(f"• {pattern}")
+                            else:
+                                st.info(f"• {pattern}")
+                    
+                    with col2:
+                        for pattern in unique_patterns[mid_point:]:
+                            if "🔥" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "EXCELLENT" in pattern or "STRONG attack" in pattern:
+                                st.success(f"• {pattern}")
+                            elif "VERY POOR" in pattern or "POOR form" in pattern or "WEAK" in pattern or "struggle" in pattern:
+                                st.error(f"• {pattern}")
+                            elif "due for goals" in pattern.lower():
+                                st.warning(f"• {pattern}")
+                            elif "regression possible" in pattern.lower():
+                                st.warning(f"• {pattern}")
+                            else:
+                                st.info(f"• {pattern}")
+            
+            # Defensive analysis
+            st.header("🛡️ Defensive Analysis")
+            
+            home_def_analysis = result_pred['defensive_analysis']['home']
+            away_def_analysis = result_pred['defensive_analysis']['away']
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader(f"{home_name} Defense")
+                
+                # Strength indicator
+                if home_def_analysis['is_very_strong']:
+                    strength = "🎯 **VERY STRONG**"
+                elif home_def_analysis['is_strong']:
+                    strength = "✅ **Strong**"
+                elif home_def_analysis['is_weak']:
+                    strength = "⚠️ **Weak**"
+                else:
+                    strength = "📊 **Average**"
+                
+                st.markdown(f"**Strength:** {strength}")
+                st.write(f"**Goals Conceded/Game:** {home_defense:.2f}")
+                st.write(f"**xG Conceded/Game:** {home_xg_against:.2f}")
+                
+                if home_def_analysis['xg_better_than_actual']:
+                    st.success(f"✅ Defense BETTER than stats show")
+                    st.caption(f"(Concedes {home_defense:.2f} but xGA suggests {home_xg_against:.2f} - conceding LESS than expected)")
+                elif home_def_analysis['xg_worse_than_actual']:
+                    st.error(f"⚠️ Defense WORSE than stats show")
+                    st.caption(f"(Concedes {home_defense:.2f} but xGA suggests {home_xg_against:.2f} - conceding MORE than expected)")
+                else:
+                    st.info(f"📊 Defense matches expected performance")
+                
+                if home_def_analysis['clean_sheet_likely']:
+                    st.success(f"✅ High clean sheet probability ({home_cs}%)")
+            
+            with col2:
+                st.subheader(f"{away_name} Defense")
+                
+                # Strength indicator
+                if away_def_analysis['is_very_strong']:
+                    strength = "🎯 **VERY STRONG**"
+                elif away_def_analysis['is_strong']:
+                    strength = "✅ **Strong**"
+                elif away_def_analysis['is_weak']:
+                    strength = "⚠️ **Weak**"
+                else:
+                    strength = "📊 **Average**"
+                
+                st.markdown(f"**Strength:** {strength}")
+                st.write(f"**Goals Conceded/Game:** {away_defense:.2f}")
+                st.write(f"**xG Conceded/Game:** {away_xg_against:.2f}")
+                
+                if away_def_analysis['xg_better_than_actual']:
+                    st.success(f"✅ Defense BETTER than stats show")
+                    st.caption(f"(Concedes {away_defense:.2f} but xGA suggests {away_xg_against:.2f} - conceding LESS than expected)")
+                elif away_def_analysis['xg_worse_than_actual']:
+                    st.error(f"⚠️ Defense WORSE than stats show")
+                    st.caption(f"(Concedes {away_defense:.2f} but xGA suggests {away_xg_against:.2f} - conceding MORE than expected)")
+                else:
+                    st.info(f"📊 Defense matches expected performance")
+                
+                if away_def_analysis['clean_sheet_likely']:
+                    st.success(f"✅ High clean sheet probability ({away_cs}%)")
+            
+            # League context and final summary
+            st.header("🏆 Final Summary")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("League Avg Goals", f"{engine.context.league_avg_goals:.2f}")
+            with col2:
+                st.metric("League Avg xG/Team", f"{engine.context.league_avg_xg:.2f}")
+            with col3:
+                st.metric("Predicted Total", f"{total_expected:.2f}")
+            
+            # Final recommendation
+            st.subheader("🎯 Final Recommendation")
+            
+            # Create a summary based on all predictions
+            recommendations = []
+            
+            # Match result
+            if result_pred['prediction'] == Prediction.HOME_WIN:
+                recommendations.append(f"**Home Win** ({result_pred['probabilities']['home_win']:.1%} probability)")
+            elif result_pred['prediction'] == Prediction.AWAY_WIN:
+                recommendations.append(f"**Away Win** ({result_pred['probabilities']['away_win']:.1%} probability)")
+            else:
+                recommendations.append(f"**Draw** ({result_pred['probabilities']['draw']:.1%} probability)")
+            
+            # Over/Under
+            recommendations.append(f"**{over_under_pred['prediction'].value}** ({over_under_pred['probabilities']['over' if 'Over' in over_under_pred['prediction'].value else 'under']:.1%} probability)")
+            
+            # BTTS
+            recommendations.append(f"**{btts_pred['prediction'].value}** ({btts_pred['probabilities']['btts_yes' if 'Yes' in btts_pred['prediction'].value else 'btts_no']:.1%} probability)")
+            
+            # Display recommendations
+            st.info(" | ".join(recommendations))
+            
+            # Risk assessment
+            st.subheader("⚠️ Risk Assessment")
+            
+            risks = []
+            if over_under_pred['confidence'] in ["Low", "Very Low", "Toss-up"]:
+                risks.append("Over/Under prediction has low confidence")
+            if btts_pred['confidence'] in ["Low", "Very Low", "Toss-up"]:
+                risks.append("BTTS prediction is very close to 50/50")
+            if abs(result_pred['probabilities']['home_win'] - result_pred['probabilities']['away_win']) < 0.15:
+                risks.append("Match result prediction is close")
+            
+            if risks:
+                for risk in risks:
+                    st.warning(risk)
+            else:
+                st.success("All predictions have reasonable confidence levels")
+
+def set_example_preston_coventry():
+    """Example: Preston vs Coventry with realistic data"""
+    st.session_state.home_name = "Preston"
+    st.session_state.home_attack = 1.40
+    st.session_state.home_defense = 1.00
+    st.session_state.home_ppg = 1.80
+    st.session_state.home_games = 19
+    st.session_state.home_cs = 30
+    st.session_state.home_fts = 20
+    st.session_state.home_xg_for = 1.36
+    st.session_state.home_xg_against = 1.42
+    st.session_state.home_goals5 = 7
+    st.session_state.home_conceded5 = 7
+    
+    st.session_state.away_name = "Coventry"
+    st.session_state.away_attack = 2.50
+    st.session_state.away_defense = 1.40
+    st.session_state.away_ppg = 2.00
+    st.session_state.away_games = 19
+    st.session_state.away_cs = 40
+    st.session_state.away_fts = 20
+    st.session_state.away_xg_for = 1.86
+    st.session_state.away_xg_against = 1.40
+    st.session_state.away_goals5 = 9
+    st.session_state.away_conceded5 = 9
+    
+    st.session_state.h2h_btts = 40
+    st.session_state.h2h_meetings = 5
+
+def set_example_southampton():
+    """Example: Southampton vs West Brom with realistic data"""
+    st.session_state.home_name = "Southampton"
+    st.session_state.home_attack = 1.44
+    st.session_state.home_defense = 0.89
+    st.session_state.home_ppg = 1.67
+    st.session_state.home_games = 19
+    st.session_state.home_cs = 33
+    st.session_state.home_fts = 33
+    st.session_state.home_xg_for = 1.79
+    st.session_state.home_xg_against = 1.14
+    st.session_state.home_goals5 = 9
+    st.session_state.home_conceded5 = 4
+    
+    st.session_state.away_name = "West Brom"
+    st.session_state.away_attack = 1.00
+    st.session_state.away_defense = 1.70
+    st.session_state.away_ppg = 0.90
+    st.session_state.away_games = 19
+    st.session_state.away_cs = 20
+    st.session_state.away_fts = 30
+    st.session_state.away_xg_for = 1.20
+    st.session_state.away_xg_against = 1.90
+    st.session_state.away_goals5 = 5
+    st.session_state.away_conceded5 = 10
+    
+    st.session_state.h2h_btts = 60
+    st.session_state.h2h_meetings = 5
+
+def set_example_defensive_battle():
+    """Example: Defensive Battle pattern"""
+    st.session_state.home_name = "Norwich"
+    st.session_state.home_attack = 0.90
+    st.session_state.home_defense = 1.10
+    st.session_state.home_ppg = 1.10
+    st.session_state.home_games = 19
+    st.session_state.home_cs = 30
+    st.session_state.home_fts = 40
+    st.session_state.home_xg_for = 1.52
+    st.session_state.home_xg_against = 1.39  # xGA > Actual = Defense BETTER than stats
+    st.session_state.home_goals5 = 7
+    st.session_state.home_conceded5 = 6
+    
+    st.session_state.away_name = "Sheffield United"
+    st.session_state.away_attack = 0.89
+    st.session_state.away_defense = 1.33
+    st.session_state.away_ppg = 0.89
+    st.session_state.away_games = 18
+    st.session_state.away_cs = 22
+    st.session_state.away_fts = 44
+    st.session_state.away_xg_for = 1.19
+    st.session_state.away_xg_against = 1.48  # xGA > Actual = Defense BETTER than stats
+    st.session_state.away_goals5 = 5
+    st.session_state.away_conceded5 = 8
+    
+    st.session_state.h2h_btts = 60
+    st.session_state.h2h_meetings = 5
+
+def clear_session_state():
+    """Clear all session state data"""
+    keys_to_clear = [
+        'home_name', 'home_attack', 'home_defense', 'home_ppg', 'home_games',
+        'home_cs', 'home_fts', 'home_xg_for', 'home_xg_against',
+        'home_goals5', 'home_conceded5',
+        'away_name', 'away_attack', 'away_defense', 'away_ppg', 'away_games',
+        'away_cs', 'away_fts', 'away_xg_for', 'away_xg_against',
+        'away_goals5', 'away_conceded5',
+        'h2h_btts', 'h2h_meetings'
+    ]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
 
 if __name__ == "__main__":
     main()
