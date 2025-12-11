@@ -1,6 +1,6 @@
 """
-Football Predictor Pro v2.0 - WITH GOOGLE SHEETS TRACKING
-Enhanced with Google Sheets integration for saving predictions and tracking performance
+Football Predictor Pro v2.0 - WITH SUPABASE TRACKING
+Enhanced with Supabase integration for saving predictions and tracking performance
 """
 
 import streamlit as st
@@ -9,10 +9,9 @@ import math
 from typing import Dict, Tuple, List, Optional
 from dataclasses import dataclass
 from enum import Enum
-import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pytz
+from supabase import create_client, Client
 
 # ========== ENGINE CLASSES ==========
 
@@ -71,141 +70,142 @@ class MatchContext:
     home_advantage: float = 1.15
     away_penalty: float = 0.92
 
-# ========== GOOGLE SHEETS INTEGRATION ==========
+# ========== SUPABASE TRACKER ==========
 
-class GoogleSheetsTracker:
-    """Handles Google Sheets integration for saving predictions"""
+class SupabaseTracker:
+    """Save predictions to Supabase database"""
     
     def __init__(self):
-        self.sheet_url = "https://docs.google.com/spreadsheets/d/13Zw4TksoH9P1PWv1HuNpapZOOnT_dIm_Pr85qRof4yE/edit#gid=0"
-        self.sheet_name = "Football Predictions"
-        
-    def connect(self):
-        """Connect to Google Sheets using credentials from secrets"""
+        # Get credentials from secrets
         try:
-            # Get credentials from secrets
-            if 'google_sheets' not in st.secrets:
-                st.error("Google Sheets credentials not found in secrets.toml")
-                return None
-            
-            # Create credentials from secrets
-            creds_dict = dict(st.secrets['google_sheets'])
-            credentials = Credentials.from_service_account_info(
-                creds_dict,
-                scopes=['https://www.googleapis.com/auth/spreadsheets']
-            )
-            
-            # Connect to Google Sheets
-            client = gspread.authorize(credentials)
-            return client
-            
+            self.supabase_url = st.secrets["supabase"]["url"]
+            self.supabase_key = st.secrets["supabase"]["key"]
+            self.client: Client = create_client(self.supabase_url, self.supabase_key)
+            st.session_state['supabase_connected'] = True
         except Exception as e:
-            st.error(f"Error connecting to Google Sheets: {str(e)}")
-            return None
+            st.error(f"Error connecting to Supabase: {str(e)}")
+            st.session_state['supabase_connected'] = False
     
     def save_prediction(self, prediction_data: Dict):
-        """Save a prediction to Google Sheets"""
+        """Save prediction to Supabase"""
         try:
-            client = self.connect()
-            if not client:
-                return {'success': False, 'error': 'Failed to connect'}
+            if not hasattr(self, 'client') or not self.client:
+                return {'success': False, 'error': 'Supabase client not initialized'}
             
-            # Open the spreadsheet
-            spreadsheet = client.open_by_url(self.sheet_url)
-            worksheet = spreadsheet.sheet1
-            
-            # Prepare row data
-            row_data = [
-                datetime.now(pytz.UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                prediction_data['home_team'],
-                prediction_data['away_team'],
-                prediction_data.get('pattern', ''),
-                prediction_data.get('primary_bet', ''),
-                prediction_data.get('stake', ''),
-                prediction_data.get('confidence', ''),
-                'PENDING',  # Status
-                '',  # Actual Score
-                '',  # Bet Outcome
-                prediction_data.get('notes', '')
-            ]
-            
-            # Append to sheet
-            worksheet.append_row(row_data)
-            
-            # Get the row number for reference
-            all_values = worksheet.get_all_values()
-            row_number = len(all_values)  # 1-indexed
-            
-            return {
-                'success': True,
-                'row_number': row_number,
-                'sheet_url': self.sheet_url
+            # Prepare data matching your table columns
+            data = {
+                "home_team": prediction_data.get('home_team', ''),
+                "away_team": prediction_data.get('away_team', ''),
+                "pattern": prediction_data.get('pattern', 'No pattern detected'),
+                "primary_bet": prediction_data.get('primary_bet', 'No pattern bet'),
+                "stake": prediction_data.get('stake', 'NORMAL (1x)'),
+                "confidence": prediction_data.get('confidence', 'Medium'),
+                "notes": prediction_data.get('notes', ''),
+                "expected_home": float(prediction_data.get('expected_home', 0)),
+                "expected_away": float(prediction_data.get('expected_away', 0)),
+                "timestamp": datetime.now(pytz.UTC).isoformat(),
+                "status": "PENDING"
             }
             
+            # Insert into Supabase
+            response = self.client.table("predictions").insert(data).execute()
+            
+            if response.data:
+                pred_id = response.data[0]['id']
+                return {
+                    'success': True,
+                    'message': f"✅ Prediction saved to database! (ID: {pred_id})",
+                    'prediction_id': pred_id
+                }
+            else:
+                return {'success': False, 'error': 'No response from database'}
+                
         except Exception as e:
-            st.error(f"Error saving to Google Sheets: {str(e)}")
-            return {'success': False, 'error': str(e)}
+            error_msg = str(e)
+            st.error(f"Database error: {error_msg}")
+            return {'success': False, 'error': f"Database error: {error_msg}"}
     
     def get_predictions(self, limit: int = 50):
-        """Get predictions from Google Sheets"""
+        """Get predictions from Supabase"""
         try:
-            client = self.connect()
-            if not client:
+            if not hasattr(self, 'client') or not self.client:
                 return pd.DataFrame()
             
-            spreadsheet = client.open_by_url(self.sheet_url)
-            worksheet = spreadsheet.sheet1
+            # Fetch predictions from Supabase
+            response = self.client.table("predictions")\
+                .select("*")\
+                .order('timestamp', desc=True)\
+                .limit(limit)\
+                .execute()
             
-            # Get all data
-            data = worksheet.get_all_records()
-            
-            # Convert to DataFrame for easier handling
-            df = pd.DataFrame(data)
-            
-            # Sort by timestamp (newest first)
-            if 'Timestamp' in df.columns and not df.empty:
-                df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
-                df = df.sort_values('Timestamp', ascending=False)
-            
-            # Limit results
-            if limit and len(df) > limit:
-                df = df.head(limit)
-            
-            return df
-            
+            if response.data:
+                df = pd.DataFrame(response.data)
+                
+                # Convert timestamp to datetime
+                if 'timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                
+                return df
+            else:
+                return pd.DataFrame()
+                
         except Exception as e:
-            st.error(f"Error reading from Google Sheets: {str(e)}")
+            st.error(f"Error reading from database: {str(e)}")
             return pd.DataFrame()
     
-    def update_result(self, row_index: int, actual_score: str, bet_outcome: str, notes: str = ""):
+    def update_result(self, prediction_id: int, actual_score: str, bet_outcome: str, notes: str = ""):
         """Update a prediction with actual result"""
         try:
-            client = self.connect()
-            if not client:
+            if not hasattr(self, 'client') or not self.client:
                 return False
             
-            spreadsheet = client.open_by_url(self.sheet_url)
-            worksheet = spreadsheet.sheet1
+            # Update the prediction
+            data = {
+                "actual_score": actual_score,
+                "bet_outcome": bet_outcome,
+                "notes": notes if notes else "",
+                "status": "COMPLETED",
+                "updated_at": datetime.now(pytz.UTC).isoformat()
+            }
             
-            # Convert row_index to 1-based for Google Sheets
-            # row_index is the DataFrame index, need to add 2 (1 for header, 1 for 0-based)
-            sheet_row = row_index + 2
+            response = self.client.table("predictions")\
+                .update(data)\
+                .eq('id', prediction_id)\
+                .execute()
             
-            # Update the row
-            worksheet.update(f'I{sheet_row}', [[actual_score]])  # Actual Score column
-            worksheet.update(f'J{sheet_row}', [[bet_outcome]])   # Bet Outcome column
-            worksheet.update(f'K{sheet_row}', [[notes]])         # Notes column
-            
-            # Update Status based on bet outcome
-            if bet_outcome:
-                status = 'COMPLETED'
-                worksheet.update(f'H{sheet_row}', [[status]])    # Status column
-            
-            return True
+            return True if response.data else False
             
         except Exception as e:
-            st.error(f"Error updating Google Sheets: {str(e)}")
+            st.error(f"Error updating database: {str(e)}")
             return False
+    
+    def get_pending_predictions(self):
+        """Get pending predictions from Supabase"""
+        try:
+            if not hasattr(self, 'client') or not self.client:
+                return pd.DataFrame()
+            
+            # Fetch pending predictions
+            response = self.client.table("predictions")\
+                .select("*")\
+                .eq('status', 'PENDING')\
+                .order('timestamp', desc=True)\
+                .execute()
+            
+            if response.data:
+                df = pd.DataFrame(response.data)
+                
+                # Convert timestamp to datetime
+                if 'timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                
+                return df
+            else:
+                return pd.DataFrame()
+                
+        except Exception as e:
+            st.error(f"Error reading pending predictions: {str(e)}")
+            return pd.DataFrame()
 
 # ========== PREDICTION ENGINE ==========
 
@@ -1028,14 +1028,17 @@ class PredictionEngineV2:
 
 def main():
     st.set_page_config(
-        page_title="Football Predictor Pro v2.0 - WITH TRACKING",
+        page_title="Football Predictor Pro v2.0 - SUPABASE TRACKING",
         page_icon="⚽",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
-    # Initialize Google Sheets tracker
-    sheets_tracker = GoogleSheetsTracker()
+    # Initialize Supabase tracker
+    if 'tracker' not in st.session_state:
+        st.session_state.tracker = SupabaseTracker()
+    
+    tracker = st.session_state.tracker
     
     # Initialize prediction engine
     engine = PredictionEngineV2()
@@ -1061,9 +1064,16 @@ def main():
     ])
     
     with tab1:
-        # ========== YOUR EXISTING PREDICTION INTERFACE ==========
+        # ========== PREDICTION INTERFACE ==========
         st.title("⚽ Football Predictor Pro v2.0")
-        st.caption("Enhanced with xG Integration + Google Sheets Tracking 📊")
+        st.caption("Enhanced with xG Integration + Supabase Database Tracking 📊")
+        
+        # Show connection status
+        if hasattr(st.session_state, 'supabase_connected'):
+            if st.session_state.supabase_connected:
+                st.success("✅ Connected to Supabase database")
+            else:
+                st.warning("⚠️ Supabase connection failed. Predictions won't be saved.")
         
         # Sidebar
         with st.sidebar:
@@ -1098,10 +1108,10 @@ def main():
             - Sample-size aware predictions
             - Advanced defensive analysis
             - xG pattern detection
-            - **NEW: Google Sheets Tracking**
+            - **NEW: Supabase Database Tracking**
             """)
         
-        # Your existing input form
+        # Input form
         st.header("📊 Enter Match Data")
         
         col_names = st.columns(2)
@@ -1777,16 +1787,16 @@ def main():
                 else:
                     st.success("All predictions have reasonable confidence levels")
         
-        # NEW: Save to Google Sheets button (only shows after prediction)
-        if 'last_prediction' in st.session_state:
+        # NEW: Save to Supabase button (only shows after prediction)
+        if 'last_prediction' in st.session_state and hasattr(st.session_state, 'supabase_connected') and st.session_state.supabase_connected:
             st.divider()
             st.subheader("💾 Save Prediction")
             
             col_save1, col_save2 = st.columns([3, 1])
             
             with col_save1:
-                if st.button("💾 Save Prediction to Google Sheets", type="secondary", use_container_width=True):
-                    with st.spinner("Saving to Google Sheets..."):
+                if st.button("💾 Save Prediction to Database", type="secondary", use_container_width=True):
+                    with st.spinner("Saving to database..."):
                         # Prepare data for saving
                         pred_data = st.session_state['last_prediction']
                         pattern_info = pred_data['patterns_detected'][0] if pred_data['patterns_detected'] else {}
@@ -1798,17 +1808,18 @@ def main():
                             'primary_bet': pattern_info.get('bet', 'No pattern bet'),
                             'stake': pattern_info.get('stake', 'NORMAL (1x)'),
                             'confidence': pattern_info.get('confidence', 'Medium'),
-                            'notes': f"Expected: {pred_data['expected_goals'][0]:.1f}-{pred_data['expected_goals'][1]:.1f}"
+                            'notes': f"Expected: {pred_data['expected_goals'][0]:.1f}-{pred_data['expected_goals'][1]:.1f}",
+                            'expected_home': pred_data['expected_goals'][0],
+                            'expected_away': pred_data['expected_goals'][1]
                         }
                         
-                        # Save to Google Sheets
-                        result = sheets_tracker.save_prediction(save_data)
+                        # Save to Supabase
+                        result = tracker.save_prediction(save_data)
                         
-                        if result and result['success']:
-                            st.success(f"✅ Prediction saved to Google Sheets! (Row {result['row_number']})")
-                            st.markdown(f"[📊 Open Google Sheet]({result['sheet_url']})")
+                        if result['success']:
+                            st.success(result['message'])
                         else:
-                            st.error("Failed to save to Google Sheets. Check credentials.")
+                            st.error(f"Failed to save: {result['error']}")
             
             with col_save2:
                 st.markdown("""
@@ -1820,19 +1831,19 @@ def main():
     with tab2:
         # ========== PREDICTION HISTORY TAB ==========
         st.title("📋 Prediction History")
-        st.caption("View all saved predictions from Google Sheets")
+        st.caption("View all saved predictions from database")
         
         try:
-            # Fetch predictions from Google Sheets
-            with st.spinner("Loading predictions from Google Sheets..."):
-                predictions_df = sheets_tracker.get_predictions(limit=100)
+            # Fetch predictions from Supabase
+            with st.spinner("Loading predictions from database..."):
+                predictions_df = tracker.get_predictions(limit=100)
             
             if predictions_df.empty:
                 st.info("No predictions saved yet. Generate and save predictions in the PREDICT tab.")
             else:
                 # Display statistics
                 total_predictions = len(predictions_df)
-                pending = len(predictions_df[predictions_df['Status'] == 'PENDING'])
+                pending = len(predictions_df[predictions_df['status'] == 'PENDING'])
                 completed = total_predictions - pending
                 
                 col1, col2, col3 = st.columns(3)
@@ -1863,38 +1874,38 @@ def main():
                 with col_filter3:
                     pattern_filter = st.selectbox(
                         "Pattern",
-                        ["All"] + list(predictions_df['Pattern'].unique()) if 'Pattern' in predictions_df.columns else ["All"],
+                        ["All"] + list(predictions_df['pattern'].unique()) if 'pattern' in predictions_df.columns else ["All"],
                         key="pattern_filter"
                     )
                 
                 # Apply filters
                 filtered_df = predictions_df.copy()
                 if status_filter != "All":
-                    filtered_df = filtered_df[filtered_df['Status'] == status_filter]
+                    filtered_df = filtered_df[filtered_df['status'] == status_filter]
                 if team_filter:
                     filtered_df = filtered_df[
-                        filtered_df['Home Team'].str.contains(team_filter, case=False, na=False) | 
-                        filtered_df['Away Team'].str.contains(team_filter, case=False, na=False)
+                        filtered_df['home_team'].str.contains(team_filter, case=False, na=False) | 
+                        filtered_df['away_team'].str.contains(team_filter, case=False, na=False)
                     ]
-                if pattern_filter != "All" and 'Pattern' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['Pattern'] == pattern_filter]
+                if pattern_filter != "All" and 'pattern' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['pattern'] == pattern_filter]
                 
                 # Display table
                 st.dataframe(
                     filtered_df,
                     use_container_width=True,
                     column_config={
-                        "Timestamp": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm"),
-                        "Home Team": st.column_config.TextColumn("Home"),
-                        "Away Team": st.column_config.TextColumn("Away"),
-                        "Pattern": st.column_config.TextColumn("Pattern"),
-                        "Primary Bet": st.column_config.TextColumn("Bet"),
-                        "Stake": st.column_config.TextColumn("Stake"),
-                        "Confidence": st.column_config.TextColumn("Conf"),
-                        "Status": st.column_config.TextColumn("Status"),
-                        "Actual Score": st.column_config.TextColumn("Score"),
-                        "Bet Outcome": st.column_config.TextColumn("Outcome"),
-                        "Notes": st.column_config.TextColumn("Notes", width="large")
+                        "timestamp": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm"),
+                        "home_team": st.column_config.TextColumn("Home"),
+                        "away_team": st.column_config.TextColumn("Away"),
+                        "pattern": st.column_config.TextColumn("Pattern"),
+                        "primary_bet": st.column_config.TextColumn("Bet"),
+                        "stake": st.column_config.TextColumn("Stake"),
+                        "confidence": st.column_config.TextColumn("Conf"),
+                        "status": st.column_config.TextColumn("Status"),
+                        "actual_score": st.column_config.TextColumn("Score"),
+                        "bet_outcome": st.column_config.TextColumn("Outcome"),
+                        "notes": st.column_config.TextColumn("Notes", width="large")
                     },
                     hide_index=True
                 )
@@ -1911,7 +1922,6 @@ def main():
                 
         except Exception as e:
             st.error(f"Error loading predictions: {str(e)}")
-            st.info("Make sure Google Sheets credentials are set up correctly.")
     
     with tab3:
         # ========== PERFORMANCE DASHBOARD TAB ==========
@@ -1920,15 +1930,15 @@ def main():
         
         try:
             # Fetch predictions
-            predictions_df = sheets_tracker.get_predictions(limit=200)
+            predictions_df = tracker.get_predictions(limit=200)
             
             if predictions_df.empty:
                 st.info("No predictions saved yet. Save some predictions first.")
             else:
                 # Filter only completed predictions with outcomes
                 completed_df = predictions_df[
-                    (predictions_df['Status'] == 'COMPLETED') & 
-                    (predictions_df['Bet Outcome'].isin(['WIN', 'LOSS', 'PUSH']))
+                    (predictions_df['status'] == 'COMPLETED') & 
+                    (predictions_df['bet_outcome'].isin(['WIN', 'LOSS', 'PUSH']))
                 ]
                 
                 if completed_df.empty:
@@ -1936,9 +1946,9 @@ def main():
                 else:
                     # Calculate metrics
                     total_bets = len(completed_df)
-                    wins = len(completed_df[completed_df['Bet Outcome'] == 'WIN'])
-                    losses = len(completed_df[completed_df['Bet Outcome'] == 'LOSS'])
-                    pushes = len(completed_df[completed_df['Bet Outcome'] == 'PUSH'])
+                    wins = len(completed_df[completed_df['bet_outcome'] == 'WIN'])
+                    losses = len(completed_df[completed_df['bet_outcome'] == 'LOSS'])
+                    pushes = len(completed_df[completed_df['bet_outcome'] == 'PUSH'])
                     
                     win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
                     
@@ -1959,12 +1969,12 @@ def main():
                     # Pattern performance
                     st.subheader("🎯 Pattern Performance")
                     
-                    if 'Pattern' in completed_df.columns:
+                    if 'pattern' in completed_df.columns:
                         pattern_stats = []
-                        for pattern in completed_df['Pattern'].unique():
-                            pattern_df = completed_df[completed_df['Pattern'] == pattern]
-                            pattern_wins = len(pattern_df[pattern_df['Bet Outcome'] == 'WIN'])
-                            pattern_losses = len(pattern_df[pattern_df['Bet Outcome'] == 'LOSS'])
+                        for pattern in completed_df['pattern'].unique():
+                            pattern_df = completed_df[completed_df['pattern'] == pattern]
+                            pattern_wins = len(pattern_df[pattern_df['bet_outcome'] == 'WIN'])
+                            pattern_losses = len(pattern_df[pattern_df['bet_outcome'] == 'LOSS'])
                             pattern_total = pattern_wins + pattern_losses
                             pattern_win_rate = (pattern_wins / pattern_total * 100) if pattern_total > 0 else 0
                             
@@ -1984,10 +1994,10 @@ def main():
                     # Monthly performance
                     st.subheader("📅 Monthly Trend")
                     
-                    if 'Timestamp' in completed_df.columns:
-                        completed_df['Month'] = pd.to_datetime(completed_df['Timestamp']).dt.to_period('M').astype(str)
+                    if 'timestamp' in completed_df.columns:
+                        completed_df['Month'] = pd.to_datetime(completed_df['timestamp']).dt.to_period('M').astype(str)
                         monthly_stats = completed_df.groupby('Month').agg({
-                            'Bet Outcome': ['count', lambda x: (x == 'WIN').sum()]
+                            'bet_outcome': ['count', lambda x: (x == 'WIN').sum()]
                         }).round(1)
                         
                         if not monthly_stats.empty:
@@ -1998,12 +2008,12 @@ def main():
                     # Stake performance
                     st.subheader("💰 Stake Performance")
                     
-                    if 'Stake' in completed_df.columns:
+                    if 'stake' in completed_df.columns:
                         stake_stats = []
-                        for stake in completed_df['Stake'].unique():
-                            stake_df = completed_df[completed_df['Stake'] == stake]
-                            stake_wins = len(stake_df[stake_df['Bet Outcome'] == 'WIN'])
-                            stake_losses = len(stake_df[stake_df['Bet Outcome'] == 'LOSS'])
+                        for stake in completed_df['stake'].unique():
+                            stake_df = completed_df[completed_df['stake'] == stake]
+                            stake_wins = len(stake_df[stake_df['bet_outcome'] == 'WIN'])
+                            stake_losses = len(stake_df[stake_df['bet_outcome'] == 'LOSS'])
                             stake_total = stake_wins + stake_losses
                             stake_win_rate = (stake_wins / stake_total * 100) if stake_total > 0 else 0
                             
@@ -2025,8 +2035,8 @@ def main():
                     
                     recent_df = completed_df.head(10)
                     if not recent_df.empty:
-                        recent_wins = len(recent_df[recent_df['Bet Outcome'] == 'WIN'])
-                        recent_losses = len(recent_df[recent_df['Bet Outcome'] == 'LOSS'])
+                        recent_wins = len(recent_df[recent_df['bet_outcome'] == 'WIN'])
+                        recent_losses = len(recent_df[recent_df['bet_outcome'] == 'LOSS'])
                         recent_total = recent_wins + recent_losses
                         recent_win_rate = (recent_wins / recent_total * 100) if recent_total > 0 else 0
                         
@@ -2046,152 +2056,146 @@ def main():
         st.caption("Enter actual match results to track prediction performance")
         
         try:
-            # Fetch predictions from Google Sheets
-            with st.spinner("Loading predictions from Google Sheets..."):
-                predictions_df = sheets_tracker.get_predictions(limit=100)
+            # Fetch pending predictions from Supabase
+            with st.spinner("Loading pending predictions from database..."):
+                pending_df = tracker.get_pending_predictions()
             
-            if predictions_df.empty:
-                st.info("No predictions found. Save some predictions first.")
+            if pending_df.empty:
+                st.success("🎉 All predictions are up to date!")
+                st.info("No pending matches to update.")
             else:
-                # Get pending predictions
-                pending_df = predictions_df[predictions_df['Status'] == 'PENDING']
+                # Select match to update
+                st.subheader("Select Match to Update")
                 
-                if pending_df.empty:
-                    st.success("🎉 All predictions are up to date!")
-                    st.info("No pending matches to update.")
+                # Create display options
+                match_options = []
+                for idx, row in pending_df.iterrows():
+                    match_str = f"{row.get('home_team', 'Home')} vs {row.get('away_team', 'Away')} - {row.get('pattern', 'No pattern')} - {row.get('primary_bet', 'No bet')}"
+                    match_options.append((row['id'], match_str, row))
+                
+                if match_options:
+                    selected_option = st.selectbox(
+                        "Choose a match:",
+                        options=[opt[1] for opt in match_options],
+                        index=0
+                    )
+                    
+                    # Get the selected row
+                    selected_id = [opt[0] for opt in match_options if opt[1] == selected_option][0]
+                    selected_row = [opt[2] for opt in match_options if opt[1] == selected_option][0]
+                    
+                    # Display current prediction
+                    with st.expander("📋 View Prediction Details", expanded=True):
+                        col_info1, col_info2 = st.columns(2)
+                        with col_info1:
+                            st.write(f"**Home Team:** {selected_row.get('home_team', '')}")
+                            st.write(f"**Away Team:** {selected_row.get('away_team', '')}")
+                            st.write(f"**Pattern:** {selected_row.get('pattern', '')}")
+                            st.write(f"**Prediction Date:** {selected_row.get('timestamp', '')}")
+                        with col_info2:
+                            st.write(f"**Primary Bet:** {selected_row.get('primary_bet', '')}")
+                            st.write(f"**Stake:** {selected_row.get('stake', '')}")
+                            st.write(f"**Confidence:** {selected_row.get('confidence', '')}")
+                            st.write(f"**Status:** {selected_row.get('status', 'PENDING')}")
+                    
+                    # Result input form
+                    st.subheader("⚽ Enter Match Results")
+                    
+                    col_score1, col_score2, col_score3 = st.columns(3)
+                    with col_score1:
+                        home_score = st.number_input("Home Score", 0, 20, 0, key="home_score_input")
+                    with col_score2:
+                        away_score = st.number_input("Away Score", 0, 20, 0, key="away_score_input")
+                    with col_score3:
+                        total_goals = home_score + away_score
+                        st.metric("Total Goals", total_goals)
+                    
+                    # Calculate BTTS
+                    btts_actual = "YES" if home_score > 0 and away_score > 0 else "NO"
+                    st.write(f"**Both Teams Scored:** {btts_actual}")
+                    
+                    # Match result
+                    match_result = "Home Win" if home_score > away_score else "Away Win" if away_score > home_score else "Draw"
+                    st.write(f"**Match Result:** {match_result}")
+                    
+                    # Determine bet outcome
+                    st.subheader("💰 Determine Bet Outcome")
+                    
+                    # Get the predicted bet from the selected row
+                    predicted_bet = selected_row.get('primary_bet', '')
+                    bet_outcome = "PUSH"  # Default
+                    
+                    if "UNDER 2.5" in predicted_bet.upper():
+                        if total_goals < 2.5:
+                            bet_outcome = "WIN"
+                        elif total_goals > 2.5:
+                            bet_outcome = "LOSS"
+                        else:
+                            bet_outcome = "PUSH"
+                    elif "OVER 2.5" in predicted_bet.upper():
+                        if total_goals > 2.5:
+                            bet_outcome = "WIN"
+                        elif total_goals < 2.5:
+                            bet_outcome = "LOSS"
+                        else:
+                            bet_outcome = "PUSH"
+                    elif "BTTS NO" in predicted_bet.upper():
+                        if btts_actual == "NO":
+                            bet_outcome = "WIN"
+                        else:
+                            bet_outcome = "LOSS"
+                    elif "BTTS YES" in predicted_bet.upper():
+                        if btts_actual == "YES":
+                            bet_outcome = "WIN"
+                        else:
+                            bet_outcome = "LOSS"
+                    elif "WIN" in predicted_bet.upper():
+                        # For match winner bets
+                        predicted_winner = "Home" if "HOME" in predicted_bet.upper() else "Away" if "AWAY" in predicted_bet.upper() else ""
+                        if predicted_winner:
+                            if predicted_winner == "Home" and home_score > away_score:
+                                bet_outcome = "WIN"
+                            elif predicted_winner == "Away" and away_score > home_score:
+                                bet_outcome = "WIN"
+                            else:
+                                bet_outcome = "LOSS"
+                    
+                    # Display outcome
+                    outcome_col1, outcome_col2 = st.columns(2)
+                    with outcome_col1:
+                        if bet_outcome == "WIN":
+                            st.success(f"✅ **Bet Outcome:** {bet_outcome}")
+                        elif bet_outcome == "LOSS":
+                            st.error(f"❌ **Bet Outcome:** {bet_outcome}")
+                        else:
+                            st.warning(f"⚪ **Bet Outcome:** {bet_outcome}")
+                    
+                    with outcome_col2:
+                        notes = st.text_area("Notes (optional)", placeholder="Key match events, injuries, weather conditions, etc.", height=100)
+                    
+                    # Update button
+                    if st.button("💾 Save Results to Database", type="primary", use_container_width=True):
+                        with st.spinner("Updating database..."):
+                            success = tracker.update_result(
+                                prediction_id=selected_id,
+                                actual_score=f"{home_score}-{away_score}",
+                                bet_outcome=bet_outcome,
+                                notes=notes
+                            )
+                            
+                            if success:
+                                st.success("✅ Results saved successfully!")
+                                st.balloons()
+                                st.rerun()
+                            else:
+                                st.error("Failed to save results. Please try again.")
                 else:
-                    # Select match to update
-                    st.subheader("Select Match to Update")
-                    
-                    # Create display options
-                    match_options = []
-                    for idx, row in pending_df.iterrows():
-                        match_str = f"{row.get('Home Team', 'Home')} vs {row.get('Away Team', 'Away')} - {row.get('Pattern', 'No pattern')} - {row.get('Primary Bet', 'No bet')}"
-                        match_options.append((idx, match_str, row))
-                    
-                    if match_options:
-                        selected_option = st.selectbox(
-                            "Choose a match:",
-                            options=[opt[1] for opt in match_options],
-                            index=0
-                        )
-                        
-                        # Get the selected row
-                        selected_idx = [opt[0] for opt in match_options if opt[1] == selected_option][0]
-                        selected_row = [opt[2] for opt in match_options if opt[1] == selected_option][0]
-                        
-                        # Display current prediction
-                        with st.expander("📋 View Prediction Details", expanded=True):
-                            col_info1, col_info2 = st.columns(2)
-                            with col_info1:
-                                st.write(f"**Home Team:** {selected_row.get('Home Team', '')}")
-                                st.write(f"**Away Team:** {selected_row.get('Away Team', '')}")
-                                st.write(f"**Pattern:** {selected_row.get('Pattern', '')}")
-                                st.write(f"**Prediction Date:** {selected_row.get('Timestamp', '')}")
-                            with col_info2:
-                                st.write(f"**Primary Bet:** {selected_row.get('Primary Bet', '')}")
-                                st.write(f"**Stake:** {selected_row.get('Stake', '')}")
-                                st.write(f"**Confidence:** {selected_row.get('Confidence', '')}")
-                                st.write(f"**Status:** {selected_row.get('Status', 'PENDING')}")
-                        
-                        # Result input form
-                        st.subheader("⚽ Enter Match Results")
-                        
-                        col_score1, col_score2, col_score3 = st.columns(3)
-                        with col_score1:
-                            home_score = st.number_input("Home Score", 0, 20, 0, key="home_score_input")
-                        with col_score2:
-                            away_score = st.number_input("Away Score", 0, 20, 0, key="away_score_input")
-                        with col_score3:
-                            total_goals = home_score + away_score
-                            st.metric("Total Goals", total_goals)
-                        
-                        # Calculate BTTS
-                        btts_actual = "YES" if home_score > 0 and away_score > 0 else "NO"
-                        st.write(f"**Both Teams Scored:** {btts_actual}")
-                        
-                        # Match result
-                        match_result = "Home Win" if home_score > away_score else "Away Win" if away_score > home_score else "Draw"
-                        st.write(f"**Match Result:** {match_result}")
-                        
-                        # Determine bet outcome
-                        st.subheader("💰 Determine Bet Outcome")
-                        
-                        # Get the predicted bet from the selected row
-                        predicted_bet = selected_row.get('Primary Bet', '')
-                        bet_outcome = "PUSH"  # Default
-                        
-                        if "UNDER 2.5" in predicted_bet.upper():
-                            if total_goals < 2.5:
-                                bet_outcome = "WIN"
-                            elif total_goals > 2.5:
-                                bet_outcome = "LOSS"
-                            else:
-                                bet_outcome = "PUSH"
-                        elif "OVER 2.5" in predicted_bet.upper():
-                            if total_goals > 2.5:
-                                bet_outcome = "WIN"
-                            elif total_goals < 2.5:
-                                bet_outcome = "LOSS"
-                            else:
-                                bet_outcome = "PUSH"
-                        elif "BTTS NO" in predicted_bet.upper():
-                            if btts_actual == "NO":
-                                bet_outcome = "WIN"
-                            else:
-                                bet_outcome = "LOSS"
-                        elif "BTTS YES" in predicted_bet.upper():
-                            if btts_actual == "YES":
-                                bet_outcome = "WIN"
-                            else:
-                                bet_outcome = "LOSS"
-                        elif "WIN" in predicted_bet.upper():
-                            # For match winner bets
-                            predicted_winner = "Home" if "HOME" in predicted_bet.upper() else "Away" if "AWAY" in predicted_bet.upper() else ""
-                            if predicted_winner:
-                                if predicted_winner == "Home" and home_score > away_score:
-                                    bet_outcome = "WIN"
-                                elif predicted_winner == "Away" and away_score > home_score:
-                                    bet_outcome = "WIN"
-                                else:
-                                    bet_outcome = "LOSS"
-                        
-                        # Display outcome
-                        outcome_col1, outcome_col2 = st.columns(2)
-                        with outcome_col1:
-                            if bet_outcome == "WIN":
-                                st.success(f"✅ **Bet Outcome:** {bet_outcome}")
-                            elif bet_outcome == "LOSS":
-                                st.error(f"❌ **Bet Outcome:** {bet_outcome}")
-                            else:
-                                st.warning(f"⚪ **Bet Outcome:** {bet_outcome}")
-                        
-                        with outcome_col2:
-                            notes = st.text_area("Notes (optional)", placeholder="Key match events, injuries, weather conditions, etc.", height=100)
-                        
-                        # Update button
-                        if st.button("💾 Save Results to Google Sheets", type="primary", use_container_width=True):
-                            with st.spinner("Updating Google Sheets..."):
-                                success = sheets_tracker.update_result(
-                                    row_index=selected_idx,
-                                    actual_score=f"{home_score}-{away_score}",
-                                    bet_outcome=bet_outcome,
-                                    notes=notes
-                                )
-                                
-                                if success:
-                                    st.success("✅ Results saved successfully!")
-                                    st.balloons()
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to save results. Please try again.")
-                    else:
-                        st.info("No pending matches found.")
+                    st.info("No pending matches found.")
         
         except Exception as e:
             st.error(f"Error loading pending matches: {str(e)}")
 
-# ========== YOUR EXISTING HELPER FUNCTIONS ==========
+# ========== HELPER FUNCTIONS ==========
 
 def set_example_preston_coventry():
     """Example: Preston vs Coventry with realistic data"""
