@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 import uuid
 from typing import Dict, Tuple, List, Optional, Any
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from enum import Enum
 
